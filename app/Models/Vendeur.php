@@ -16,7 +16,7 @@ class Vendeur extends Model
 
     protected $fillable = [
         'user_id', 'nom_commerce', 'categorie_principale', 'zone_id', 'coordonnees_gps',
-        'note_moyenne', 'statut_validation', 'solde_disponible',
+        'note_moyenne', 'statut_validation', 'statut_boutique', 'solde_disponible',
         'photo_boutique', 'document_identite', 'registre_commerce',
         'numero_mobile_money_reception', 'horaires_ouverture',
         'delai_moyen_preparation'

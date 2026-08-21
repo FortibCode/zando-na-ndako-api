@@ -63,8 +63,10 @@ Route::get('/produits/recents', [CatalogueController::class, 'recents']);
 Route::get('/produits/promotions', [CatalogueController::class, 'promotions']);
 Route::get('/produits/search', [CatalogueController::class, 'search']);
 Route::get('/produits/{id}', [CatalogueController::class, 'produitDetail']);
+Route::get('/vendeurs/top', [CatalogueController::class, 'vendeursTop']);
 Route::get('/vendeurs/{id}/avis', [CatalogueController::class, 'avisVendeur']);
 Route::get('/vendeur/{vendeurId}/produits', [CatalogueController::class, 'produitsVendeur']);
+Route::get('/avis/publics', [CatalogueController::class, 'avisPublics']);
 
 // === DIASPORA - SUIVI PARTAGÉ & CONVERSION DEVISE (Public) ===
 Route::get('/diaspora/suivi/{numeroCommande}', [DiasporaController::class, 'suiviPartage']);
@@ -182,6 +184,7 @@ Route::middleware(['auth:sanctum'])->group(function () {
     Route::middleware(['role:vendeur'])->prefix('vendeur')->group(function () {
         Route::get('/dashboard', [VendeurController::class, 'dashboard']);
         Route::put('/profil', [VendeurController::class, 'mettreAJourProfil']);
+        Route::put('/statut-boutique', [VendeurController::class, 'mettreAJourStatutBoutique']);
         Route::post('/documents', [VendeurController::class, 'televerserDocuments']);
         Route::get('/commandes', [VendeurController::class, 'commandes']);
         Route::get('/commandes/{id}', [VendeurController::class, 'commandeDetail']);

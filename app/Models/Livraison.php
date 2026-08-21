@@ -18,7 +18,7 @@ class Livraison extends Model
 protected $fillable = [
         'commande_id', 'livreur_id', 'statut_livraison', 'date_collecte',
         'date_depart_client', 'date_livraison', 'photo_preuve', 'distance_parcourue',
-        'duree_reelle', 'motif_incident'
+        'duree_reelle', 'motif_incident', 'photo_incident'
     ];
 
     protected $casts = [

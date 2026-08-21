@@ -11,7 +11,7 @@ class TauxChangeSeeder extends Seeder
     {
         $taux = [
             ['devise_source' => 'USD', 'devise_cible' => 'FCFA', 'valeur_taux' => 2800.000000, 'source_taux' => 'Banca Centrale'],
-            ['devise_source' => 'EUR', 'devise_cible' => 'FCFA', 'valeur_taux' => 3000.000000, 'source_taux' => 'Banca Centrale'],
+            ['devise_source' => 'EUR', 'devise_cible' => 'FCFA', 'valeur_taux' => 655.957000, 'source_taux' => 'Parite fixe XAF/EUR (BEAC)'],
             ['devise_source' => 'GBP', 'devise_cible' => 'FCFA', 'valeur_taux' => 3500.000000, 'source_taux' => 'Banca Centrale'],
             ['devise_source' => 'CAD', 'devise_cible' => 'FCFA', 'valeur_taux' => 2050.000000, 'source_taux' => 'Banca Centrale'],
         ];

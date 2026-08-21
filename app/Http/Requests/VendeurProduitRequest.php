@@ -20,7 +20,7 @@ class VendeurProduitRequest extends FormRequest
             'prix_unitaire'        => 'required|numeric|min:0',
             'unite_mesure'         => 'required|string|max:50',
             'quantite_stock'       => 'required|integer|min:0',
-            'type_fraicheur'       => 'sometimes|in:frais,seche,surgele',
+            'type_fraicheur'       => 'sometimes|in:frais,fume,congele',
             'photo'                => 'nullable|image|mimes:jpeg,png,jpg,webp|max:3072',
         ];
     }

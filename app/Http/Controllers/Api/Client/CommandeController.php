@@ -74,6 +74,19 @@ class CommandeController extends Controller
         $vendeurId    = $panier->lignes->first()->produit->vendeur_id;
         $vendeur      = Vendeur::find($vendeurId);
 
+        // Un vendeur "en pause" ou "fermé" ne doit plus pouvoir recevoir de nouvelle commande :
+        // c'est exactement ce que l'écran mobile "Statut de la boutique" promet au vendeur
+        // ("En pause : vous ne recevez pas de nouvelles commandes"). Vérifié ici (et non plus tôt
+        // dans PanierController::ajouter) pour laisser le client garder des articles en panier
+        // sans bloquer la navigation — seule la validation finale de la commande est refusée.
+        if (!$vendeur || $vendeur->statut_boutique !== 'ouverte') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Ce vendeur ne peut pas recevoir de nouvelle commande pour le moment.',
+                'error_code' => 'VENDEUR_INDISPONIBLE',
+            ], 400);
+        }
+
         // Prix de livraison sur la distance réelle de l'itinéraire (vendeur → point de livraison)
         // quand on a les deux coordonnées et un service de routage configuré ; sinon, repli sur le
         // tarif de zone habituel — jamais de commande bloquée faute de géolocalisation.
@@ -224,7 +237,12 @@ class CommandeController extends Controller
     {
         $client    = $request->user()->client;
         $commandes = Commande::where('client_id', $client->id)
-            ->with(['lignes.produit', 'paiement', 'livraison'])
+            ->with([
+                'lignes.produit', 'paiement', 'livraison', 'vendeur', 'livreur',
+                // Uniquement les notations déjà laissées PAR ce client, pour que l'app puisse
+                // savoir si la commande reste "à noter" sans requête supplémentaire par commande.
+                'notations' => fn ($q) => $q->where('type_notateur', 'client'),
+            ])
             ->orderBy('created_at', 'desc')
             ->paginate(15);
 

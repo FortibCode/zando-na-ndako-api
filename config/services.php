@@ -56,4 +56,19 @@ return [
         'mode'      => env('PAYPAL_MODE', 'sandbox'), // 'sandbox' ou 'live'
     ],
 
+    'mtn_momo' => [
+        'environment' => env('MTN_MOMO_ENVIRONMENT', 'sandbox'),
+        'currency'    => env('MTN_MOMO_CURRENCY', 'XAF'),
+        'collection'  => [
+            'user_id'          => env('MTN_MOMO_COLLECTION_USER_ID'),
+            'api_key'          => env('MTN_MOMO_COLLECTION_API_KEY'),
+            'subscription_key' => env('MTN_MOMO_COLLECTION_SUBSCRIPTION_KEY'),
+        ],
+        'disbursement' => [
+            'user_id'          => env('MTN_MOMO_DISBURSEMENT_USER_ID'),
+            'api_key'          => env('MTN_MOMO_DISBURSEMENT_API_KEY'),
+            'subscription_key' => env('MTN_MOMO_DISBURSEMENT_SUBSCRIPTION_KEY'),
+        ],
+    ],
+
 ];

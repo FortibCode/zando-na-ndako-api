@@ -101,7 +101,10 @@ class DiasporaController extends Controller
     public function historique(Request $request): JsonResponse
     {
         $client = $request->user()->client;
-        return response()->json(['success' => true, 'data' => Commande::where('client_id', $client->id)->where('type_commande', 'diaspora')->with(['beneficiaire', 'lignes.produit', 'paiement', 'livraison'])->orderBy('created_at', 'desc')->paginate(15)]);
+        return response()->json(['success' => true, 'data' => Commande::where('client_id', $client->id)->where('type_commande', 'diaspora')->with([
+            'beneficiaire', 'lignes.produit', 'paiement', 'livraison', 'vendeur', 'livreur',
+            'notations' => fn ($q) => $q->where('type_notateur', 'client'),
+        ])->orderBy('created_at', 'desc')->paginate(15)]);
     }
 
     // POST /api/diaspora/paiement/confirmer

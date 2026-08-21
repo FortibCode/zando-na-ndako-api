@@ -168,8 +168,16 @@ public function accepterMission(Request $request, string $id): JsonResponse
 
     public function signalerProbleme(Request $request, string $id): JsonResponse
     {
-        $validated = $request->validate(['motif'=>'required|string|max:500']);
-        Livraison::where('id',$id)->where('livreur_id',$this->getLivreur($request)->id)->firstOrFail()->update(['statut_livraison'=>'echouee','motif_incident'=>$validated['motif']]);
+        $validated = $request->validate([
+            'motif' => 'required|string|max:500',
+            'photo_incident' => 'nullable|image|mimes:jpeg,png,jpg|max:5120',
+        ]);
+        $photoPath = $request->hasFile('photo_incident') ? $request->file('photo_incident')->store('photos/incidents','public') : null;
+        Livraison::where('id',$id)->where('livreur_id',$this->getLivreur($request)->id)->firstOrFail()->update([
+            'statut_livraison' => 'echouee',
+            'motif_incident' => $validated['motif'],
+            'photo_incident' => $photoPath,
+        ]);
         DashboardCache::bump();
         return response()->json(['success'=>true,'message'=>'Problème signalé.']);
     }

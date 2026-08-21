@@ -30,6 +30,16 @@ class VendeurController extends Controller
         return response()->json(['success' => true, 'data' => [
             'nom_commerce' => $v->nom_commerce,
             'solde_disponible' => $v->solde_disponible, 'note_moyenne' => $v->note_moyenne, 'statut_validation' => $v->statut_validation,
+            // Exposés ici (plutôt que par une nouvelle route GET /vendeur/profil dédiée) car
+            // dashboard() est déjà l'appel de chargement initial du contexte vendeur mobile : le
+            // statut de boutique, les horaires et les documents doivent refléter l'état réel au
+            // démarrage de l'app, pas seulement des valeurs locales par défaut.
+            'statut_boutique' => $v->statut_boutique,
+            'horaires_ouverture' => $v->horaires_ouverture,
+            'numero_mobile_money_reception' => $v->numero_mobile_money_reception,
+            'photo_boutique' => $v->photo_boutique,
+            'document_identite' => $v->document_identite,
+            'registre_commerce' => $v->registre_commerce,
             'commandes_aujourd_hui' => (clone $c)->whereDate('date_commande', today())->count(),
             'commandes_en_cours' => (clone $c)->whereIn('statut_commande', ['confirmee','achat_marche','preparation'])->count(),
             'commandes_livrees' => (clone $c)->where('statut_commande', 'livree')->count(),
@@ -37,6 +47,21 @@ class VendeurController extends Controller
             'produits_rupture' => $v->produits()->where('statut_disponibilite', 'rupture')->count(),
             'revenus_mois' => (clone $c)->whereMonth('date_commande', now()->month)->where('statut_commande', 'livree')->sum('montant_sous_total'),
         ]]);
+    }
+
+    // PUT /api/vendeur/statut-boutique — ouverte/pause/fermee. Contrairement au reste de
+    // mettreAJourProfil(), ce champ n'est pas qu'une donnée d'affichage : il conditionne
+    // réellement la création de commandes (voir CommandeController::valider) et la visibilité au
+    // catalogue public (voir CatalogueController) pour que la promesse faite au vendeur par
+    // l'écran mobile "Statut de la boutique" devienne vraie.
+    public function mettreAJourStatutBoutique(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'statut_boutique' => 'required|in:ouverte,pause,fermee',
+        ]);
+        $v = $this->getVendeur($request);
+        $v->update($validated);
+        return response()->json(['success' => true, 'message' => 'Statut de la boutique mis à jour.', 'data' => $v]);
     }
 
     // PUT /api/vendeur/profil — nom de la boutique + position GPS (point de collecte pour le calcul
@@ -231,10 +256,16 @@ class VendeurController extends Controller
     {
         $v = $this->getVendeur($request);
         $m = $request->get('mois',now()->month); $a = $request->get('annee',now()->year);
-        $revenus = Commande::where('vendeur_id',$v->id)->where('statut_commande','livree')->whereMonth('date_commande',$m)->whereYear('date_commande',$a)->sum('montant_sous_total');
+        $commandesLivreesDuMois = Commande::where('vendeur_id',$v->id)->where('statut_commande','livree')->whereMonth('date_commande',$m)->whereYear('date_commande',$a);
+        $revenus = (clone $commandesLivreesDuMois)->sum('montant_sous_total');
+        // Panier moyen réel (au lieu d'une valeur figée côté mobile) : moyenne du sous-total des
+        // commandes livrées du mois. `avg()` renvoie null s'il n'y a aucune commande livrée —
+        // ramené à 0 plutôt que d'afficher une valeur fantaisiste.
+        $panierMoyen = (clone $commandesLivreesDuMois)->avg('montant_sous_total');
         $taux = (float) ParametrePlateforme::valeur('taux_commission_vendeur', '10') / 100;
         return response()->json(['success'=>true,'data'=>[
             'solde_disponible'=>$v->solde_disponible,'revenus_bruts'=>$revenus,'commissions'=>$revenus*$taux,'revenus_nets'=>$revenus*(1-$taux),'mois'=>$m,'annee'=>$a,
+            'panier_moyen'=>round((float) ($panierMoyen ?? 0), 2),
             'ventes_semaine'=>$this->ventesSemaine($v->id),
             'produits_plus_vendus'=>$this->produitsPlusVendus($v->id),
         ]]);
