@@ -12,6 +12,10 @@ class ParametresSeeder extends Seeder
         $params = [
             ['cle' => 'taux_commission_vendeur', 'valeur' => '10', 'description' => 'Pourcentage de commission prélevé sur les ventes'],
             ['cle' => 'frais_livraison_defaut', 'valeur' => '2000', 'description' => 'Frais de livraison par défaut en FCFA'],
+            // Barème appliqué à la distance réelle de l'itinéraire (voir RoutingService::calculerFrais)
+            ['cle' => 'frais_livraison_base', 'valeur' => '800', 'description' => "Frais de livraison fixes (FCFA), quelle que soit la distance parcourue"],
+            ['cle' => 'frais_livraison_par_km', 'valeur' => '300', 'description' => 'Frais de livraison supplémentaires (FCFA) par kilomètre parcouru'],
+            ['cle' => 'frais_livraison_plancher', 'valeur' => '1000', 'description' => 'Frais de livraison minimum (FCFA), même pour un trajet très court'],
             ['cle' => 'remuneration_livreur_fixe', 'valeur' => '2000', 'description' => 'Montant fixe versé au livreur par course'],
             ['cle' => 'nom_application', 'valeur' => 'Zando na Ndako', 'description' => 'Nom officiel de la plateforme'],
             ['cle' => 'contact_support_telephone', 'valeur' => '068745323', 'description' => 'Téléphone du support client'],

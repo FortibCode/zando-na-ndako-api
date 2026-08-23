@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\ParametrePlateforme;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 
@@ -65,14 +66,15 @@ class RoutingService
 
     // Barème appliqué à la distance réelle de l'itinéraire : une base fixe (prise en charge,
     // quel que soit le trajet) + un tarif au kilomètre, avec un plancher pour rester cohérent
-    // avec les anciens tarifs de zone (2000-3000 FCFA sur Brazzaville).
-    private const FRAIS_BASE = 800;
-    private const FRAIS_PAR_KM = 300;
-    private const FRAIS_PLANCHER = 1000;
-
+    // avec les anciens tarifs de zone (2000-3000 FCFA sur Brazzaville). Réglable depuis
+    // /admin/parametres (préfixe frais_livraison_*, déjà reconnu par cette page) plutôt que codé en
+    // dur — ce barème dépend du prix du carburant / des conditions du marché, pas de la logique.
     public function calculerFrais(float $distanceKm): float
     {
-        return max(self::FRAIS_PLANCHER, self::FRAIS_BASE + $distanceKm * self::FRAIS_PAR_KM);
+        $base = (float) ParametrePlateforme::valeur('frais_livraison_base', '800');
+        $parKm = (float) ParametrePlateforme::valeur('frais_livraison_par_km', '300');
+        $plancher = (float) ParametrePlateforme::valeur('frais_livraison_plancher', '1000');
+        return max($plancher, $base + $distanceKm * $parKm);
     }
 
     /**

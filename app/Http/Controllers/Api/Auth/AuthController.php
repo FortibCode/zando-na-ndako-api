@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\Client;
 use App\Models\Vendeur;
+use App\Models\TypeBoutique;
 use App\Models\Livreur;
 use App\Models\CodeOTP;
 use App\Services\SmsService;
@@ -42,7 +43,7 @@ class AuthController extends Controller
             // Champs vendeur — envoyés par l'app mobile (signup/vendor) mais jusqu'ici absents de
             // cette liste, donc systématiquement ignorés par $validated malgré la saisie réelle.
             'nom_commerce'          => 'required_if:type_utilisateur,vendeur|string|max:150',
-            'categorie_principale'  => 'required_if:type_utilisateur,vendeur|string|max:100',
+            'categorie_principale'  => 'required_if:type_utilisateur,vendeur|string|in:' . implode(',', TypeBoutique::libellesValides()),
             'zone_id'               => 'sometimes|uuid|exists:zones_livraison,id',
             // Champs livreur — même problème.
             'type_vehicule'         => 'required_if:type_utilisateur,livreur|in:moto,voiture',
@@ -73,15 +74,13 @@ class AuthController extends Controller
                     'user_id'      => $user->id,
                     'est_diaspora' => $validated['est_diaspora'] ?? false,
                 ]),
-                // Validé immédiatement à l'inscription : aucune interface d'administration n'existe
-                // encore pour qu'un admin valide manuellement les nouveaux vendeurs, donc les bloquer
-                // sur 'en_attente' les laissait sans aucun moyen de publier un produit.
+                // En attente de validation KYC par l'administration (géré via le back-office /admin/vendeurs)
                 'vendeur' => Vendeur::create([
                     'user_id'           => $user->id,
                     'nom_commerce'      => $validated['nom_commerce'] ?? 'Boutique ' . $validated['prenom'],
-                    'categorie_principale' => $validated['categorie_principale'] ?? 'epicier',
+                    'categorie_principale' => $validated['categorie_principale'] ?? (TypeBoutique::libellesValides()[0] ?? 'Autre commerce'),
                     'zone_id'           => $validated['zone_id'] ?? null,
-                    'statut_validation' => 'valide',
+                    'statut_validation' => 'en_attente',
                     'solde_disponible'  => 0,
                 ]),
                 'livreur' => Livreur::create([

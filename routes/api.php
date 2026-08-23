@@ -64,7 +64,12 @@ Route::get('/produits/promotions', [CatalogueController::class, 'promotions']);
 Route::get('/produits/search', [CatalogueController::class, 'search']);
 Route::get('/produits/{id}', [CatalogueController::class, 'produitDetail']);
 Route::get('/vendeurs/top', [CatalogueController::class, 'vendeursTop']);
+Route::get('/vendeurs/types', [CatalogueController::class, 'vendeurTypes']);
+Route::get('/vendeurs/types-disponibles', [CatalogueController::class, 'vendeurTypesDisponibles']);
+Route::get('/vendeurs/types-logos', [CatalogueController::class, 'vendeurTypesAvecLogos']);
+Route::get('/vendeurs', [CatalogueController::class, 'vendeurs']);
 Route::get('/vendeurs/{id}/avis', [CatalogueController::class, 'avisVendeur']);
+Route::get('/vendeurs/{id}', [CatalogueController::class, 'vendeurDetail']);
 Route::get('/vendeur/{vendeurId}/produits', [CatalogueController::class, 'produitsVendeur']);
 Route::get('/avis/publics', [CatalogueController::class, 'avisPublics']);
 
@@ -143,6 +148,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/{id}/litige', [ClientLitigeController::class, 'ouvrir']);
         });
 
+        // Motifs de litige valides — pas spécifique au client, sert aussi au vendeur (voir
+        // admin_web/src/app/vendeur/litiges) quand il ouvre lui-même un litige.
+        Route::get('/litiges/motifs', [ClientLitigeController::class, 'motifs']);
+
         // === LITIGES (mes litiges, en tant que client) ===
         Route::prefix('client/litiges')->group(function () {
             Route::get('/', [ClientLitigeController::class, 'index']);
@@ -190,6 +199,9 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/commandes/{id}', [VendeurController::class, 'commandeDetail']);
         Route::post('/commandes/{id}/accepter', [VendeurController::class, 'accepterCommande']);
         Route::post('/commandes/{id}/refuser', [VendeurController::class, 'refuserCommande']);
+        // Commande prise par téléphone / en personne pour un client sans compte — voir le
+        // commentaire détaillé sur VendeurController::creerCommandeManuelle().
+        Route::post('/commandes/manuelle', [VendeurController::class, 'creerCommandeManuelle']);
         Route::get('/produits', [VendeurController::class, 'produits']);
         Route::post('/produits', [VendeurController::class, 'ajouterProduit']);
         Route::put('/produits/{id}', [VendeurController::class, 'modifierProduit']);
@@ -207,6 +219,13 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/litiges', [VendeurController::class, 'litiges']);
         Route::get('/litiges/{id}', [VendeurController::class, 'litigeDetail']);
         Route::get('/avis', [VendeurController::class, 'avis']);
+
+        // Promotions self-service du vendeur (distinct de /admin/promotions, la bannière gérée
+        // par l'administrateur).
+        Route::get('/promotions', [VendeurController::class, 'promotionsVendeur']);
+        Route::post('/promotions', [VendeurController::class, 'creerPromotionVendeur']);
+        Route::patch('/promotions/{id}', [VendeurController::class, 'modifierPromotionVendeur']);
+        Route::delete('/promotions/{id}', [VendeurController::class, 'supprimerPromotionVendeur']);
     });
 
 
@@ -300,11 +319,13 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
             Route::post('/{id}/activer', [AdminController::class, 'activerUtilisateur'])->middleware('permission:manage_users_status');
             Route::post('/{id}/suspendre', [AdminController::class, 'suspendreUtilisateur'])->middleware('permission:manage_users_status');
             Route::post('/{id}/reset-password', [AdminController::class, 'reinitialiserMotDePasse'])->middleware('permission:manage_users_status');
+            Route::delete('/{id}', [AdminController::class, 'supprimerUtilisateur'])->middleware('permission:delete_users');
         });
 
         Route::prefix('vendeurs')->group(function () {
             Route::get('/', [AdminController::class, 'vendeurs'])->middleware('permission:view_vendeurs');
             Route::get('/{id}', [AdminController::class, 'vendeurDetail'])->middleware('permission:view_vendeurs');
+            Route::put('/{id}', [AdminController::class, 'modifierVendeur'])->middleware('permission:edit_vendeurs');
             Route::post('/{id}/valider', [AdminController::class, 'validerVendeur'])->middleware('permission:validate_vendeurs');
             Route::post('/{id}/suspendre', [AdminController::class, 'suspendreVendeur'])->middleware('permission:suspendre_vendeurs');
         });
@@ -343,6 +364,13 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
             Route::delete('/{id}', [AdminController::class, 'supprimerCategorie'])->middleware('permission:delete_categories');
         });
 
+        Route::prefix('types-boutique')->group(function () {
+            Route::get('/', [AdminController::class, 'typesBoutique'])->middleware('permission:view_types_boutique');
+            Route::post('/', [AdminController::class, 'ajouterTypeBoutique'])->middleware('permission:create_types_boutique');
+            Route::put('/{id}', [AdminController::class, 'modifierTypeBoutique'])->middleware('permission:edit_types_boutique');
+            Route::delete('/{id}', [AdminController::class, 'supprimerTypeBoutique'])->middleware('permission:delete_types_boutique');
+        });
+
         Route::prefix('zones')->group(function () {
             Route::get('/', [AdminController::class, 'zones'])->middleware('permission:view_zones');
             Route::post('/', [AdminController::class, 'ajouterZone'])->middleware('permission:create_zones');
@@ -360,6 +388,18 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
 
         Route::prefix('finances')->group(function () {
             Route::get('/', [AdminController::class, 'finances'])->middleware('permission:view_finances');
+        });
+
+        Route::prefix('avis')->group(function () {
+            Route::get('/', [AdminController::class, 'avis'])->middleware('permission:view_avis');
+            Route::delete('/{id}', [AdminController::class, 'supprimerAvis'])->middleware('permission:delete_avis');
+        });
+
+        Route::prefix('taux-change')->group(function () {
+            Route::get('/', [AdminController::class, 'tauxChange'])->middleware('permission:view_taux_change');
+            Route::post('/', [AdminController::class, 'ajouterTauxChange'])->middleware('permission:create_taux_change');
+            Route::put('/{id}', [AdminController::class, 'modifierTauxChange'])->middleware('permission:edit_taux_change');
+            Route::delete('/{id}', [AdminController::class, 'supprimerTauxChange'])->middleware('permission:delete_taux_change');
         });
 
         Route::get('/rapports/export', [AdminController::class, 'exporterRapport'])->middleware('permission:generate_reports');
@@ -391,6 +431,13 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
             Route::post('/{id}/decision', [AdminController::class, 'decisionLitige'])->middleware('permission:traiter_litiges');
             Route::post('/{id}/rembourser', [AdminController::class, 'rembourserLitige'])->middleware('permission:traiter_litiges');
             Route::post('/{id}/escalader', [AdminController::class, 'escaladerLitige'])->middleware('permission:traiter_litiges');
+        });
+
+        Route::prefix('litige-motifs')->group(function () {
+            Route::get('/', [AdminController::class, 'litigeMotifs'])->middleware('permission:view_litige_motifs');
+            Route::post('/', [AdminController::class, 'ajouterLitigeMotif'])->middleware('permission:create_litige_motifs');
+            Route::put('/{id}', [AdminController::class, 'modifierLitigeMotif'])->middleware('permission:edit_litige_motifs');
+            Route::delete('/{id}', [AdminController::class, 'supprimerLitigeMotif'])->middleware('permission:delete_litige_motifs');
         });
 
         Route::prefix('tickets')->group(function () {

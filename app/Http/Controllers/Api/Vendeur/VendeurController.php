@@ -4,18 +4,25 @@ namespace App\Http\Controllers\Api\Vendeur;
 
 use App\Http\Controllers\Controller;
 use App\Models\Administrateur;
+use App\Models\Client;
 use App\Models\Commande;
 use App\Models\LigneCommande;
 use App\Models\Litige;
 use App\Models\Livreur;
+use App\Models\MessageCommande;
 use App\Models\ParametrePlateforme;
 use App\Models\Produit;
+use App\Models\PromotionVendeur;
 use App\Models\RetraitVendeur;
 use App\Models\MessagerieVendeurAdmin;
+use App\Models\User;
 use App\Services\PushService;
+use App\Support\CodeSequenceGenerator;
 use App\Support\DashboardCache;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 
@@ -29,12 +36,21 @@ class VendeurController extends Controller
         $c = Commande::where('vendeur_id', $v->id);
         return response()->json(['success' => true, 'data' => [
             'nom_commerce' => $v->nom_commerce,
+            // Vrai type de commerce choisi à l'inscription (ex: "Poissonnier & Produits de mer",
+            // "Mode & Habillement"...) — l'écran mobile "Profil boutique" affichait jusqu'ici un
+            // texte "Poissonnerie" et un emoji 🐟 fixes pour tous les vendeurs, quelle que soit
+            // leur activité réelle, faute de ce champ pourtant déjà stocké en base.
+            'categorie_principale' => $v->categorie_principale,
             'solde_disponible' => $v->solde_disponible, 'note_moyenne' => $v->note_moyenne, 'statut_validation' => $v->statut_validation,
             // Exposés ici (plutôt que par une nouvelle route GET /vendeur/profil dédiée) car
             // dashboard() est déjà l'appel de chargement initial du contexte vendeur mobile : le
             // statut de boutique, les horaires et les documents doivent refléter l'état réel au
             // démarrage de l'app, pas seulement des valeurs locales par défaut.
             'statut_boutique' => $v->statut_boutique,
+            // Message affiché à côté du statut sur l'écran "Statut de la boutique" — jusqu'ici
+            // gardé uniquement dans l'état local du contexte mobile (jamais envoyé au serveur),
+            // donc perdu à chaque redémarrage malgré la confirmation "Enregistré" affichée au vendeur.
+            'message_boutique' => $v->message_boutique,
             'horaires_ouverture' => $v->horaires_ouverture,
             'numero_mobile_money_reception' => $v->numero_mobile_money_reception,
             'photo_boutique' => $v->photo_boutique,
@@ -58,6 +74,9 @@ class VendeurController extends Controller
     {
         $validated = $request->validate([
             'statut_boutique' => 'required|in:ouverte,pause,fermee',
+            // Optionnel : message affiché aux clients pendant la pause/fermeture (voir commentaire
+            // sur dashboard() ci-dessus — jusqu'ici jamais persisté malgré l'écran mobile dédié).
+            'message_boutique' => 'sometimes|nullable|string|max:300',
         ]);
         $v = $this->getVendeur($request);
         $v->update($validated);
@@ -70,6 +89,11 @@ class VendeurController extends Controller
     {
         $validated = $request->validate([
             'nom_commerce'    => 'sometimes|string|max:150',
+            // Idem : colonne déjà présente depuis la création de la table (voir migration
+            // create_vendeurs_table) mais jusqu'ici jamais modifiable après l'inscription — l'écran
+            // mobile "Informations personnelles" affichait donc toujours la catégorie choisie à
+            // l'inscription, sans moyen de la corriger si le vendeur avait changé d'activité.
+            'categorie_principale' => 'sometimes|string|in:' . implode(',', \App\Models\TypeBoutique::libellesValides()),
             'coordonnees_gps' => 'sometimes|array',
             'coordonnees_gps.lat' => 'required_with:coordonnees_gps|numeric|between:-90,90',
             'coordonnees_gps.lng' => 'required_with:coordonnees_gps|numeric|between:-180,180',
@@ -185,6 +209,102 @@ class VendeurController extends Controller
         return response()->json(['success'=>true,'message'=>'Commande refusée.']);
     }
 
+    // POST /api/vendeur/commandes/manuelle — le vendeur enregistre une commande prise par téléphone
+    // ou en personne (client sans compte dans l'application). Jusqu'ici l'écran mobile "Nouvelle
+    // commande manuelle" fabriquait un identifiant aléatoire et l'ajoutait uniquement à l'état
+    // local du contexte vendeur : rien n'était envoyé au serveur, la "commande" disparaissait au
+    // prochain rafraîchissement (polling) ou redémarrage de l'app malgré le message de succès
+    // affiché au vendeur. On recherche un compte client existant par téléphone (numéro unique sur
+    // `users`) et on n'en crée un nouveau que si besoin — un compte minimal (mot de passe aléatoire,
+    // que le client pourra réinitialiser s'il installe l'application plus tard). L'écran mobile ne
+    // collecte ni articles ni montant (juste les coordonnées du client) : la commande est donc
+    // créée à 0 FCFA avec mode_attribution=manuelle ; le message éventuel du vendeur est posté
+    // dans la messagerie de la commande (voir MessageCommandeController) au lieu d'être perdu.
+    public function creerCommandeManuelle(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'nom'       => 'required|string|max:150',
+            'telephone' => 'required|string|max:30',
+            'email'     => 'nullable|email|max:150',
+            'adresse'   => 'required|string|max:500',
+            'message'   => 'nullable|string|max:500',
+        ]);
+
+        $v = $this->getVendeur($request);
+
+        DB::beginTransaction();
+        try {
+            $user = User::where('telephone', $validated['telephone'])->first();
+
+            if ($user) {
+                $client = $user->client;
+                if (!$client) {
+                    DB::rollBack();
+                    return response()->json([
+                        'success' => false,
+                        'message' => "Ce numéro de téléphone est déjà associé à un compte qui n'est pas un compte client.",
+                    ], 422);
+                }
+            } else {
+                $parts = preg_split('/\s+/', trim($validated['nom']), 2);
+                $email = $validated['email'] ?? null;
+                // Évite de faire échouer toute la commande pour un simple conflit d'unicité sur un
+                // champ secondaire — le compte est tout de même créé, sans email.
+                if ($email && User::where('email', $email)->exists()) {
+                    $email = null;
+                }
+
+                $user = User::create([
+                    'nom'               => $parts[1] ?? $parts[0],
+                    'prenom'            => $parts[0],
+                    'email'             => $email,
+                    'telephone'         => $validated['telephone'],
+                    'mot_de_passe_hash' => Hash::make(Str::random(32)),
+                    'type_utilisateur'  => 'client',
+                    'statut_compte'     => 'actif',
+                    'consentement_cgu'  => true,
+                    'devise_preferee'   => 'FCFA',
+                ]);
+                $client = Client::create(['user_id' => $user->id]);
+            }
+
+            $commande = Commande::create([
+                'numero_commande'    => CodeSequenceGenerator::next('commande', 'ZN'),
+                'client_id'          => $client->id,
+                'vendeur_id'         => $v->id,
+                'date_commande'      => now(),
+                'statut_commande'    => 'confirmee',
+                'mode_attribution'   => 'manuelle',
+                'montant_sous_total' => 0,
+                'frais_livraison'    => 0,
+                'montant_total'      => 0,
+                'adresse_livraison'  => $validated['adresse'],
+                'type_commande'      => 'locale',
+                'devise_paiement'    => 'FCFA',
+            ]);
+
+            if (!empty($validated['message'])) {
+                MessageCommande::create([
+                    'commande_id'        => $commande->id,
+                    'expediteur_user_id' => $request->user()->id,
+                    'contenu'            => $validated['message'],
+                ]);
+            }
+
+            DB::commit();
+            DashboardCache::bump();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Commande enregistrée.',
+                'data'    => $commande->load('client.user', 'lignes.produit', 'paiement'),
+            ], 201);
+        } catch (\Throwable $e) {
+            DB::rollBack();
+            return response()->json(['success' => false, 'message' => 'Erreur lors de la création de la commande.', 'error' => $e->getMessage()], 500);
+        }
+    }
+
     public function produits(Request $request): JsonResponse
     {
         return response()->json(['success'=>true,'data'=>$this->getVendeur($request)->produits()->with('categorie')->paginate(20)]);
@@ -198,7 +318,11 @@ class VendeurController extends Controller
         $validated = $request->validate([
             'nom_produit'=>'required|string|max:200','description'=>'nullable|string','categorie_id'=>'required|uuid|exists:categories,id',
             'prix_unitaire'=>'required|numeric|min:0','unite_mesure'=>'required|string|max:50','quantite_stock'=>'required|integer|min:0',
-            'type_fraicheur'=>'sometimes|in:frais,fume,congele','photo'=>'nullable|image|mimes:jpeg,png,jpg,webp|max:3072',
+            // max:8192 (8 Mo) aligné sur upload_max_filesize/post_max_size (php.ini) : une photo de
+            // 3-8 Mo (courant pour une photo de téléphone) n'était plus tronquée par PHP depuis le
+            // relèvement à 8M, mais restait quand même rejetée ici par cette règle Laravel restée à
+            // 3072 Ko — le vendeur ne pouvait donc toujours pas publier de produit avec une vraie photo.
+            'type_fraicheur'=>'sometimes|in:frais,fume,congele','photo'=>'nullable|image|mimes:jpeg,png,jpg,webp|max:8192',
         ]);
 
         $photoPath = $request->hasFile('photo') ? $request->file('photo')->store('photos/produits','public') : null;
@@ -265,10 +389,27 @@ class VendeurController extends Controller
         $taux = (float) ParametrePlateforme::valeur('taux_commission_vendeur', '10') / 100;
         return response()->json(['success'=>true,'data'=>[
             'solde_disponible'=>$v->solde_disponible,'revenus_bruts'=>$revenus,'commissions'=>$revenus*$taux,'revenus_nets'=>$revenus*(1-$taux),'mois'=>$m,'annee'=>$a,
+            // Valeur actuelle du réglage (voir /admin/parametres, clé retrait_montant_minimum) —
+            // l'écran de retrait mobile ne doit plus la recopier en dur (1000).
+            'retrait_montant_minimum'=>(int) ParametrePlateforme::valeur('retrait_montant_minimum', '1000'),
             'panier_moyen'=>round((float) ($panierMoyen ?? 0), 2),
             'ventes_semaine'=>$this->ventesSemaine($v->id),
+            // Nombre réel de commandes livrées sur les 7 derniers jours — remplace le "42" figé
+            // qu'affichait l'écran mobile "Mes revenus" (onglet "Cette semaine") quelle que soit
+            // l'activité réelle de la boutique.
+            'commandes_semaine'=>$this->commandesSemaine($v->id),
             'produits_plus_vendus'=>$this->produitsPlusVendus($v->id),
         ]]);
+    }
+
+    // 7 derniers jours (aujourd'hui inclus), commandes livrées uniquement — même fenêtre que
+    // ventesSemaine(), pour que le nombre de commandes affiché corresponde au revenu affiché.
+    private function commandesSemaine(string $vendeurId): int
+    {
+        return Commande::where('vendeur_id', $vendeurId)
+            ->where('statut_commande', 'livree')
+            ->where('date_commande', '>=', now()->subDays(6)->startOfDay())
+            ->count();
     }
 
     // 7 derniers jours (aujourd'hui inclus), commandes livrées uniquement — utilisé pour le
@@ -447,5 +588,86 @@ class VendeurController extends Controller
             'nombre_avis' => $avis->count(),
             'avis' => $avis,
         ]]);
+    }
+
+    // ----------------------------------------------------------------
+    // PROMOTIONS VENDEUR — self-service, scopées au vendeur authentifié. Distinct de
+    // AdminController::promotions() (bannière marketing gérée par l'administrateur) : ici le
+    // vendeur crée et gère ses propres réductions, sur un produit précis ou toute sa boutique.
+    // ----------------------------------------------------------------
+    public function promotionsVendeur(Request $request): JsonResponse
+    {
+        $promos = PromotionVendeur::where('vendeur_id', $this->getVendeur($request)->id)
+            ->with('produit:id,nom_produit')
+            ->orderBy('created_at', 'desc')
+            ->get();
+        return response()->json(['success' => true, 'data' => $promos]);
+    }
+
+    public function creerPromotionVendeur(Request $request): JsonResponse
+    {
+        $v = $this->getVendeur($request);
+        $validated = $request->validate([
+            'titre' => 'required|string|max:150',
+            'description' => 'nullable|string|max:1000',
+            'produit_id' => 'nullable|uuid|exists:produits,id',
+            'type_reduction' => 'sometimes|in:pourcentage,montant_fixe',
+            'valeur_reduction' => 'required|numeric|min:0',
+            'date_debut' => 'sometimes|date',
+            'date_fin' => 'nullable|date|after_or_equal:date_debut',
+            'actif' => 'sometimes|boolean',
+        ]);
+
+        if (!empty($validated['produit_id']) && !$v->produits()->where('id', $validated['produit_id'])->exists()) {
+            return response()->json(['success' => false, 'message' => "Ce produit n'appartient pas à votre boutique."], 403);
+        }
+        $type = $validated['type_reduction'] ?? 'pourcentage';
+        if ($type === 'pourcentage' && $validated['valeur_reduction'] > 100) {
+            return response()->json(['success' => false, 'message' => 'Le pourcentage de réduction ne peut pas dépasser 100.'], 422);
+        }
+
+        $promo = PromotionVendeur::create([
+            'vendeur_id' => $v->id,
+            'produit_id' => $validated['produit_id'] ?? null,
+            'titre' => $validated['titre'],
+            'description' => $validated['description'] ?? null,
+            'type_reduction' => $type,
+            'valeur_reduction' => $validated['valeur_reduction'],
+            'date_debut' => $validated['date_debut'] ?? now(),
+            'date_fin' => $validated['date_fin'] ?? null,
+            'actif' => $validated['actif'] ?? true,
+        ]);
+
+        return response()->json(['success' => true, 'message' => 'Promotion créée.', 'data' => $promo->load('produit:id,nom_produit')], 201);
+    }
+
+    public function modifierPromotionVendeur(Request $request, string $id): JsonResponse
+    {
+        $promo = PromotionVendeur::where('id', $id)->where('vendeur_id', $this->getVendeur($request)->id)->firstOrFail();
+        $validated = $request->validate([
+            'titre' => 'sometimes|string|max:150',
+            'description' => 'nullable|string|max:1000',
+            'type_reduction' => 'sometimes|in:pourcentage,montant_fixe',
+            'valeur_reduction' => 'sometimes|numeric|min:0',
+            'date_debut' => 'sometimes|date',
+            'date_fin' => 'nullable|date|after_or_equal:date_debut',
+            'actif' => 'sometimes|boolean',
+        ]);
+
+        $type = $validated['type_reduction'] ?? $promo->type_reduction;
+        $valeur = $validated['valeur_reduction'] ?? $promo->valeur_reduction;
+        if ($type === 'pourcentage' && $valeur > 100) {
+            return response()->json(['success' => false, 'message' => 'Le pourcentage de réduction ne peut pas dépasser 100.'], 422);
+        }
+
+        $promo->update($validated);
+
+        return response()->json(['success' => true, 'message' => 'Promotion mise à jour.', 'data' => $promo->fresh()->load('produit:id,nom_produit')]);
+    }
+
+    public function supprimerPromotionVendeur(Request $request, string $id): JsonResponse
+    {
+        PromotionVendeur::where('id', $id)->where('vendeur_id', $this->getVendeur($request)->id)->firstOrFail()->delete();
+        return response()->json(['success' => true, 'message' => 'Promotion supprimée.']);
     }
 }

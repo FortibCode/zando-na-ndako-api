@@ -52,6 +52,12 @@ class Produit extends Model
         return $this->hasMany(PromotionProduit::class);
     }
 
+    // Promotions vendeur (self-service) éventuellement rattachées à ce produit précis.
+    public function promotionsVendeur()
+    {
+        return $this->hasMany(PromotionVendeur::class);
+    }
+
     // Méthodes
     public function estDisponible()
     {
@@ -61,6 +67,15 @@ class Produit extends Model
     public function getPrixAfficheAttribute()
     {
         return number_format($this->prix_unitaire, 0, ',', ' ') . ' FCFA';
+    }
+
+    // La promotion vendeur active la plus pertinente pour ce produit : priorité au ciblage
+    // produit précis, sinon la promotion "toute la boutique" (produit_id NULL) du vendeur.
+    public function promotionVendeurActive(): ?PromotionVendeur
+    {
+        $base = PromotionVendeur::where('vendeur_id', $this->vendeur_id)->active();
+        return (clone $base)->where('produit_id', $this->id)->first()
+            ?? (clone $base)->whereNull('produit_id')->first();
     }
 
     public function getPrixAvecPromotionAttribute()
@@ -77,17 +92,34 @@ class Produit extends Model
             return $promo->prix_promo;
         }
 
+        // Pas de bannière admin sur ce produit : on retombe sur une éventuelle promotion créée
+        // par le vendeur lui-même (voir PromotionVendeur) — sans quoi une promotion "vendeur"
+        // resterait purement cosmétique et le client paierait le plein tarif malgré le badge de
+        // réduction affiché.
+        if ($promoVendeur = $this->promotionVendeurActive()) {
+            $prix = (float) $this->prix_unitaire;
+            $valeur = (float) $promoVendeur->valeur_reduction;
+            $reduit = $promoVendeur->type_reduction === 'montant_fixe'
+                ? $prix - $valeur
+                : $prix * (1 - $valeur / 100);
+            return round(max(0, $reduit), 2);
+        }
+
         return $this->prix_unitaire;
     }
 
     public function getEstEnPromotionAttribute()
     {
-        return $this->promotions()
+        if ($this->promotions()
             ->whereHas('promotion', function($query) {
                 $query->where('statut_actif', true)
                     ->where('date_debut', '<=', now())
                     ->where('date_fin', '>=', now());
             })
-            ->exists();
+            ->exists()) {
+            return true;
+        }
+
+        return $this->promotionVendeurActive() !== null;
     }
 }

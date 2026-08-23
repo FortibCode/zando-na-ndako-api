@@ -53,9 +53,53 @@ class CatalogueController extends Controller
         return response()->json(['success'=>true,'data'=>$this->excluBoutiquesFermees(Produit::with('vendeur')->where('statut_disponibilite','disponible'))->orderBy('created_at','desc')->take(10)->get()]);
     }
 
+    // GET /api/produits/promotions — liste publique des produits en promotion, pour l'écran
+    // client "Promotions" (mobile) et la page /promotions du site web. Combine deux sources bien
+    // distinctes : les bannières marketing créées par l'administrateur (App\Models\Promotion via
+    // promotion_produits — inchangé) ET les promotions self-service créées par les vendeurs
+    // eux-mêmes (App\Models\PromotionVendeur — voir VendeurController::creerPromotionVendeur()).
+    // Avant ce changement seule la première source existait : la promesse faite par l'écran
+    // ("les réductions mises en place par nos vendeurs s'affichent ici automatiquement") était
+    // fausse tant qu'aucun vendeur ne pouvait réellement créer de promotion. Chaque entrée du
+    // tableau `promotions` renvoyé par produit est aplatie en {id, titre, type_reduction,
+    // valeur_reduction} — au passage, corrige aussi le fait que le sérialisé brut de la relation
+    // `promotions` (PromotionProduit) ne portait que les colonnes de la table pivot, jamais le
+    // titre/type/valeur attendus par mobile/web (discountLabel()).
     public function promotions(Request $request): JsonResponse
     {
-        return response()->json(['success'=>true,'data'=>$this->excluBoutiquesFermees(Produit::with(['vendeur','promotions'])->whereHas('promotions',fn($q)=>$q->active())->where('statut_disponibilite','disponible'))->get()]);
+        $vendeurIdsBoutique = \App\Models\PromotionVendeur::whereNull('produit_id')->active()->pluck('vendeur_id');
+        $produitIdsVendeur = \App\Models\PromotionVendeur::whereNotNull('produit_id')->active()->pluck('produit_id');
+
+        $produits = $this->excluBoutiquesFermees(
+            Produit::with(['vendeur', 'promotions.promotion'])
+                ->where('statut_disponibilite', 'disponible')
+                ->where(function ($query) use ($vendeurIdsBoutique, $produitIdsVendeur) {
+                    $query->whereHas('promotions', fn ($q) => $q->active())
+                        ->orWhereIn('vendeur_id', $vendeurIdsBoutique)
+                        ->orWhereIn('id', $produitIdsVendeur);
+                })
+        )->get();
+
+        $promosVendeurParProduit = \App\Models\PromotionVendeur::whereIn('produit_id', $produits->pluck('id'))->active()->get()->groupBy('produit_id');
+        $promosVendeurParBoutique = \App\Models\PromotionVendeur::whereNull('produit_id')->whereIn('vendeur_id', $produits->pluck('vendeur_id')->unique())->active()->get()->groupBy('vendeur_id');
+
+        $data = $produits->map(function ($p) use ($promosVendeurParProduit, $promosVendeurParBoutique) {
+            $admin = $p->promotions
+                ->filter(fn ($pp) => $pp->promotion && $pp->promotion->estActive())
+                ->map(fn ($pp) => [
+                    'id' => $pp->promotion->id, 'titre' => $pp->promotion->titre,
+                    'type_reduction' => $pp->promotion->type_reduction, 'valeur_reduction' => $pp->promotion->valeur_reduction,
+                ]);
+            $vendeur = ($promosVendeurParProduit->get($p->id, collect()))
+                ->concat($promosVendeurParBoutique->get($p->vendeur_id, collect()))
+                ->map(fn ($v) => ['id' => $v->id, 'titre' => $v->titre, 'type_reduction' => $v->type_reduction, 'valeur_reduction' => $v->valeur_reduction]);
+
+            $arr = $p->toArray();
+            $arr['promotions'] = $admin->concat($vendeur)->values();
+            return $arr;
+        })->filter(fn ($arr) => count($arr['promotions']) > 0)->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
     }
 
     public function search(Request $request): JsonResponse
@@ -96,6 +140,97 @@ class CatalogueController extends Controller
             ]);
 
         return response()->json(['success' => true, 'data' => $vendeurs]);
+    }
+
+    // GET /api/vendeurs/types — types de boutique réellement utilisés (categorie_principale est un
+    // simple champ texte libre, pas une FK/enum) : sert à construire l'écran "types de boutique" côté
+    // client sans coder en dur une liste qui pourrait ne pas correspondre aux vraies boutiques.
+    public function vendeurTypes(Request $request): JsonResponse
+    {
+        $types = \App\Models\Vendeur::where('statut_validation', 'valide')
+            ->where('statut_boutique', '!=', 'fermee')
+            ->whereNotNull('categorie_principale')
+            ->distinct()
+            ->orderBy('categorie_principale')
+            ->pluck('categorie_principale');
+
+        return response()->json(['success' => true, 'data' => $types]);
+    }
+
+    // GET /api/vendeurs/types-disponibles — la liste COMPLÈTE des types de boutique autorisés
+    // (App\Models\TypeBoutique, gérée par un admin via /admin/types-boutique), pas seulement ceux
+    // déjà utilisés par un vrai vendeur (contrairement à vendeurTypes() ci-dessus) : sert aux
+    // formulaires d'inscription/profil vendeur, où un premier vendeur d'un type donné doit pouvoir
+    // le choisir avant qu'aucun autre vendeur de ce type n'existe encore.
+    public function vendeurTypesDisponibles(Request $request): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => \App\Models\TypeBoutique::libellesValides()]);
+    }
+
+    // GET /api/vendeurs/types-logos — mêmes types que vendeurTypes() ci-dessus (réellement en
+    // usage, boutiques ouvertes/validées), avec le logo envoyé par un admin s'il existe (voir
+    // App\Models\TypeBoutique, géré via /admin/types-boutique). `logo` vaut null tant qu'aucun admin
+    // n'a rien envoyé pour ce type — le frontend retombe alors sur une icône générique, jamais une
+    // image inventée.
+    public function vendeurTypesAvecLogos(Request $request): JsonResponse
+    {
+        $types = \App\Models\Vendeur::where('statut_validation', 'valide')
+            ->where('statut_boutique', '!=', 'fermee')
+            ->whereNotNull('categorie_principale')
+            ->distinct()
+            ->orderBy('categorie_principale')
+            ->pluck('categorie_principale');
+
+        $logos = \App\Models\TypeBoutique::whereIn('type', $types)->pluck('logo', 'type');
+
+        $data = $types->map(fn ($type) => ['type' => $type, 'logo' => $logos[$type] ?? null])->values();
+
+        return response()->json(['success' => true, 'data' => $data]);
+    }
+
+    // GET /api/vendeurs — liste publique paginée des boutiques, pour l'écran client "boutiques d'un
+    // type" (remplace le parcours plat par catégorie de produit). Mêmes champs/exclusions que
+    // vendeursTop(), avec filtres réels au lieu du top-8 fixe.
+    public function vendeurs(Request $request): JsonResponse
+    {
+        $q = \App\Models\Vendeur::with('zone')
+            ->where('statut_validation', 'valide')
+            ->where('statut_boutique', '!=', 'fermee');
+
+        if ($type = $request->get('type')) $q->where('categorie_principale', $type);
+        if ($s = $request->get('search')) $q->where('nom_commerce', 'like', "%{$s}%");
+
+        $vendeurs = $q->orderByDesc('note_moyenne')->paginate(20);
+        $vendeurs->getCollection()->transform(fn ($v) => [
+            'id' => $v->id,
+            'nom_commerce' => $v->nom_commerce,
+            'categorie_principale' => $v->categorie_principale,
+            'note_moyenne' => (float) $v->note_moyenne,
+            'ville' => $v->zone?->ville,
+            'photo_boutique' => $v->photo_boutique,
+        ]);
+
+        return response()->json(['success' => true, 'data' => $vendeurs]);
+    }
+
+    // GET /api/vendeurs/{id} — profil public complet d'une boutique (en-tête de la fiche boutique
+    // côté client). N'exclut pas les boutiques fermées : un lien déjà partagé/en historique doit
+    // toujours résoudre, le frontend affiche un bandeau "boutique fermée" via statut_boutique.
+    public function vendeurDetail(Request $request, string $id): JsonResponse
+    {
+        $v = \App\Models\Vendeur::with('zone')->where('statut_validation', 'valide')->findOrFail($id);
+
+        return response()->json(['success' => true, 'data' => [
+            'id' => $v->id,
+            'nom_commerce' => $v->nom_commerce,
+            'categorie_principale' => $v->categorie_principale,
+            'note_moyenne' => (float) $v->note_moyenne,
+            'ville' => $v->zone?->ville,
+            'photo_boutique' => $v->photo_boutique,
+            'horaires_ouverture' => $v->horaires_ouverture,
+            'message_boutique' => $v->message_boutique,
+            'statut_boutique' => $v->statut_boutique,
+        ]]);
     }
 
     // GET /api/avis/publics — public : derniers avis clients commentés (tous vendeurs confondus),

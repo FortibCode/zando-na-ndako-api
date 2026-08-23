@@ -31,7 +31,7 @@ class VendeursSeeder extends Seeder
             ['user_id' => $user->id],
             [
                 'nom_commerce'                 => 'Zando Grand Marché',
-                'categorie_principale'         => 'Alimentation Générale',
+                'categorie_principale'         => 'Épicier & Produits alimentaires', // doit correspondre à une ligne de types_boutique (seedée par la migration 2026_08_22_000004)
                 'zone_id'                      => $zone?->id,
                 'statut_validation'            => 'valide',
                 'solde_disponible'             => 150000.00,

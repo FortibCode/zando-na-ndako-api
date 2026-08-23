@@ -64,6 +64,24 @@ class PanierController extends Controller
             return response()->json(['success' => false, 'message' => "Stock insuffisant. Disponible: {$produit->quantite_stock}."], 400);
         }
         $panier = $this->getPanierActif($request);
+
+        // Une commande n'est rattachée qu'à un seul vendeur (voir CommandeController::valider, qui
+        // prend le vendeur de la première ligne du panier) : un panier mélangeant deux boutiques
+        // ferait silencieusement disparaître les articles du second vendeur de sa commande, sans
+        // qu'il soit jamais notifié ni payé, alors que le client s'attend à recevoir le tout.
+        $autreLigne = LignePanier::where('panier_id', $panier->id)
+            ->where('produit_id', '!=', $produit->id)
+            ->with('produit.vendeur')
+            ->first();
+        if ($autreLigne && $autreLigne->produit->vendeur_id !== $produit->vendeur_id) {
+            return response()->json([
+                'success' => false,
+                'error_code' => 'PANIER_BOUTIQUE_DIFFERENTE',
+                'message' => 'Votre panier contient déjà des produits d\'une autre boutique. Videz-le pour commander dans cette boutique.',
+                'boutique_actuelle' => $autreLigne->produit->vendeur->nom_commerce ?? null,
+            ], 409);
+        }
+
         $ligne = LignePanier::where('panier_id', $panier->id)->where('produit_id', $produit->id)->first();
         if ($ligne) {
             $ligne->increment('quantite', $validated['quantite']);

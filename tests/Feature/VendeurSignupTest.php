@@ -33,7 +33,7 @@ class VendeurSignupTest extends TestCase
             'type_utilisateur' => 'vendeur', 'statut_compte' => 'actif', 'consentement_cgu' => true,
         ]);
         $vendeur = Vendeur::create([
-            'user_id' => $user->id, 'nom_commerce' => 'Boutique Test', 'categorie_principale' => 'epicier',
+            'user_id' => $user->id, 'nom_commerce' => 'Boutique Test', 'categorie_principale' => 'Épicier & Produits alimentaires',
             'statut_validation' => 'valide', 'solde_disponible' => 0,
         ]);
         return [$user, $vendeur];
@@ -47,7 +47,7 @@ class VendeurSignupTest extends TestCase
             'nom' => 'Moukala', 'prenom' => 'Serge', 'telephone' => '069' . random_int(1000000, 9999999),
             'mot_de_passe' => 'password123', 'mot_de_passe_confirmation' => 'password123',
             'type_utilisateur' => 'vendeur', 'consentement_cgu' => true,
-            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'epicier',
+            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'Épicier & Produits alimentaires',
             'zone_id' => $zone->id,
         ]);
 
@@ -63,7 +63,7 @@ class VendeurSignupTest extends TestCase
             'nom' => 'Moukala', 'prenom' => 'Serge', 'telephone' => '069' . random_int(1000000, 9999999),
             'mot_de_passe' => 'password123', 'mot_de_passe_confirmation' => 'password123',
             'type_utilisateur' => 'vendeur', 'consentement_cgu' => true,
-            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'epicier',
+            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'Épicier & Produits alimentaires',
         ]);
 
         $response->assertStatus(201);
@@ -75,7 +75,7 @@ class VendeurSignupTest extends TestCase
             'nom' => 'Moukala', 'prenom' => 'Serge', 'telephone' => '069' . random_int(1000000, 9999999),
             'mot_de_passe' => 'password123', 'mot_de_passe_confirmation' => 'password123',
             'type_utilisateur' => 'vendeur', 'consentement_cgu' => true,
-            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'epicier',
+            'nom_commerce' => 'Marché Frais', 'categorie_principale' => 'Épicier & Produits alimentaires',
             'zone_id' => (string) Str::uuid(),
         ]);
 

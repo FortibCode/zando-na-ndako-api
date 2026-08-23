@@ -9,8 +9,10 @@ use App\Models\User;
 use App\Models\Vendeur;
 use App\Models\Livreur;
 use App\Models\Commande;
+use App\Models\Notification;
 use App\Models\CampagneNotification;
 use App\Models\Categorie;
+use App\Models\TypeBoutique;
 use App\Models\Commission;
 use App\Models\Coupon;
 use App\Models\Livraison;
@@ -24,12 +26,15 @@ use App\Models\TicketReponse;
 use App\Models\TicketSupport;
 use App\Models\ZoneLivraison;
 use App\Models\Litige;
+use App\Models\LitigeMotif;
 use App\Models\LitigeMessage;
 use App\Models\LitigeDecision;
 use App\Models\LitigeRemboursement;
 use App\Models\RoleUser;
 use App\Models\LogActivite;
 use App\Models\ParametrePlateforme;
+use App\Models\TauxChange;
+use App\Models\NotationAvis;
 use App\Services\NotificationBroadcastService;
 use App\Services\PushService;
 use App\Services\SmsService;
@@ -131,6 +136,105 @@ class AdminController extends Controller
     // ----------------------------------------------------------------
     // FINANCES
     // ----------------------------------------------------------------
+    // GET /api/admin/taux-change — taux de conversion (App\Models\TauxChange), utilisés pour tout
+    // calcul en devise réelle (paiements diaspora, tableaux de bord). Jusqu'ici seulement peuplés
+    // par TauxChangeSeeder.php : aucun admin ne pouvait les corriger sans écriture DB directe.
+    public function tauxChange(Request $request): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => TauxChange::orderBy('devise_source')->orderBy('devise_cible')->get()]);
+    }
+
+    public function ajouterTauxChange(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'devise_source' => 'required|string|max:10',
+            'devise_cible' => 'required|string|max:10|different:devise_source',
+            'valeur_taux' => 'required|numeric|gt:0',
+            'source_taux' => 'nullable|string|max:255',
+        ]);
+        $existe = TauxChange::where('devise_source', $validated['devise_source'])->where('devise_cible', $validated['devise_cible'])->exists();
+        if ($existe) {
+            return response()->json(['success' => false, 'message' => 'Ce taux de change existe déjà — modifiez-le plutôt que d\'en créer un second.'], 422);
+        }
+        $taux = TauxChange::create($validated + ['date_maj' => now()]);
+        AuditLogger::log($request->user(), 'creer_taux_change', 'finances', 'TauxChange', $taux->id, null, $validated, $request);
+        return response()->json(['success' => true, 'data' => $taux], 201);
+    }
+
+    public function modifierTauxChange(Request $request, string $id): JsonResponse
+    {
+        $taux = TauxChange::findOrFail($id);
+        $validated = $request->validate([
+            'devise_source' => 'sometimes|string|max:10',
+            'devise_cible' => 'sometimes|string|max:10|different:devise_source',
+            'valeur_taux' => 'sometimes|numeric|gt:0',
+            'source_taux' => 'sometimes|nullable|string|max:255',
+        ]);
+        $avant = $taux->only(array_keys($validated));
+        if (array_key_exists('valeur_taux', $validated)) {
+            $validated['date_maj'] = now();
+        }
+        $taux->update($validated);
+        AuditLogger::log($request->user(), 'modifier_taux_change', 'finances', 'TauxChange', $taux->id, $avant, $validated, $request);
+        return response()->json(['success' => true, 'data' => $taux->fresh()]);
+    }
+
+    public function supprimerTauxChange(Request $request, string $id): JsonResponse
+    {
+        $taux = TauxChange::findOrFail($id);
+        AuditLogger::log($request->user(), 'supprimer_taux_change', 'finances', 'TauxChange', $taux->id, $taux->only(['devise_source', 'devise_cible', 'valeur_taux']), null, $request);
+        $taux->delete();
+        return response()->json(['success' => true, 'message' => 'Taux de change supprimé.']);
+    }
+
+    // GET /api/admin/avis — modération des avis/notations (App\Models\NotationAvis) : jusqu'ici
+    // aucune vue admin n'existait pour repérer et retirer un avis abusif ou frauduleux. Volontairement
+    // pas de "créer un avis" — un faux avis n'a pas de sens métier, seulement voir et supprimer.
+    public function avis(Request $request): JsonResponse
+    {
+        $q = NotationAvis::orderByDesc('date_notation');
+        if ($type = $request->get('type_cible')) $q->where('type_cible', $type);
+        if ($noteMax = $request->get('note_max')) $q->where('note', '<=', $noteMax);
+        if ($search = $request->get('search')) $q->where('commentaire', 'like', "%{$search}%");
+
+        $paginated = $q->paginate(20);
+        $paginated->getCollection()->transform(function (NotationAvis $a) {
+            return [
+                'id' => $a->id,
+                'note' => $a->note,
+                'commentaire' => $a->commentaire,
+                'date_notation' => $a->date_notation,
+                'type_notateur' => $a->type_notateur,
+                'type_cible' => $a->type_cible,
+                'notateur_nom' => $this->nomEntiteNotation($a->getNotateur(), $a->type_notateur),
+                'cible_nom' => $this->nomEntiteNotation($a->getCible(), $a->type_cible),
+                'commande_id' => $a->commande_id,
+            ];
+        });
+
+        return response()->json(['success' => true, 'data' => $paginated]);
+    }
+
+    private function nomEntiteNotation($entite, string $type): string
+    {
+        if (!$entite) return '—';
+        if ($type === 'vendeur') return $entite->nom_commerce ?? '—';
+        return $entite->user?->nom_complet ?? '—';
+    }
+
+    public function supprimerAvis(Request $request, string $id): JsonResponse
+    {
+        $avis = NotationAvis::findOrFail($id);
+        $cibleId = $avis->cible_id;
+        $typeCible = $avis->type_cible;
+        AuditLogger::log($request->user(), 'supprimer_avis', 'moderation', 'NotationAvis', $avis->id, $avis->only(['note', 'commentaire', 'type_cible', 'cible_id']), null, $request);
+        $avis->delete();
+        // La moyenne dénormalisée (vendeurs/livreurs/clients.note_moyenne) doit refléter la
+        // suppression immédiatement, pas seulement à la prochaine notation soumise.
+        NotationAvis::recalculerMoyenne($cibleId, $typeCible);
+        return response()->json(['success' => true, 'message' => 'Avis supprimé.']);
+    }
+
     public function finances(Request $request): JsonResponse
     {
         $mois  = $request->get('mois', now()->month);
@@ -143,13 +247,18 @@ class AdminController extends Controller
         return response()->json([
             'success' => true,
             'data'    => [
-                'chiffre_affaires'    => (clone $query)->sum('montant_total'),
-                'commissions_percues' => Commission::whereHas('commande', fn ($q) => $q->where('statut_commande', 'livree')
+                'chiffre_affaires'       => (clone $query)->sum('montant_total'),
+                'commissions_percues'    => Commission::whereHas('commande', fn ($q) => $q->where('statut_commande', 'livree')
                     ->whereMonth('date_commande', $mois)->whereYear('date_commande', $annee))->sum('montant_commission'),
-                'frais_livraison'     => (clone $query)->sum('frais_livraison'),
-                'nb_commandes'        => (clone $query)->count(),
-                'mois'                => (int) $mois,
-                'annee'               => (int) $annee,
+                'frais_livraison'        => (clone $query)->sum('frais_livraison'),
+                'nb_commandes'           => (clone $query)->count(),
+                'mois'                   => (int) $mois,
+                'annee'                  => (int) $annee,
+                // Le taux réellement appliqué à CHAQUE commission reste figé sur sa propre ligne
+                // (Commission.taux_commission, calculé au moment de la commande) — celui-ci n'est
+                // que la valeur ACTUELLE du réglage, pour l'affichage (ex: légende du graphique),
+                // qui ne doit plus jamais être recopiée en dur ("10%") à cet endroit.
+                'taux_commission_vendeur' => ParametrePlateforme::valeur('taux_commission_vendeur', '10'),
             ],
         ]);
     }
@@ -174,7 +283,13 @@ class AdminController extends Controller
     {
         $q = Commission::with(['commande.vendeur'])->orderBy('created_at', 'desc');
         if ($statut = $request->get('statut')) $q->where('statut', $statut);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        // Le taux ACTUEL du réglage (voir commentaire sur finances() ci-dessus) — pour l'écran
+        // qui n'affiche plus "10%" en dur dans sa description.
+        return response()->json([
+            'success' => true,
+            'data' => $q->paginate(20),
+            'taux_commission_vendeur' => ParametrePlateforme::valeur('taux_commission_vendeur', '10'),
+        ]);
     }
 
     public function validerCommission(Request $request, string $id): JsonResponse
@@ -566,11 +681,17 @@ class AdminController extends Controller
 
     public function activerUtilisateur(Request $request, string $id): JsonResponse
     {
-        $user = User::findOrFail($id);
+        $user = User::with(['vendeur', 'livreur'])->findOrFail($id);
         $statutAvant = $user->statut_compte;
-        $user->update(['statut_compte'=>'actif']);
-        AuditLogger::log($request->user(), 'activer_utilisateur', 'utilisateurs', 'User', $user->id, ['statut_compte'=>$statutAvant], ['statut_compte'=>'actif'], $request);
-        return response()->json(['success'=>true,'message'=>'Compte activé.']);
+        $user->update(['statut_compte' => 'actif']);
+        if ($user->vendeur && $user->vendeur->statut_validation !== 'valide') {
+            $user->vendeur->update(['statut_validation' => 'valide']);
+        }
+        if ($user->livreur && $user->livreur->statut_validation !== 'valide') {
+            $user->livreur->update(['statut_validation' => 'valide', 'statut_disponibilite' => 'disponible']);
+        }
+        AuditLogger::log($request->user(), 'activer_utilisateur', 'utilisateurs', 'User', $user->id, ['statut_compte' => $statutAvant], ['statut_compte' => 'actif'], $request);
+        return response()->json(['success' => true, 'message' => 'Compte activé.']);
     }
 
     public function reinitialiserMotDePasse(Request $request, string $id): JsonResponse
@@ -599,18 +720,60 @@ class AdminController extends Controller
 
     public function suspendreUtilisateur(Request $request, string $id): JsonResponse
     {
-        $validated = $request->validate(['motif'=>'required|string|max:500']);
-        $u = User::findOrFail($id);
+        $validated = $request->validate(['motif' => 'required|string|max:500']);
+        $u = User::with(['vendeur', 'livreur'])->findOrFail($id);
         $statutAvant = $u->statut_compte;
-        $u->update(['statut_compte'=>'suspendu']); $u->tokens()->delete();
-        AuditLogger::log($request->user(), 'suspendre_utilisateur', 'utilisateurs', 'User', $u->id, ['statut_compte'=>$statutAvant], ['statut_compte'=>'suspendu','motif'=>$validated['motif']], $request);
-        return response()->json(['success'=>true,'message'=>'Compte suspendu.']);
+        $u->update(['statut_compte' => 'suspendu']);
+        $u->tokens()->delete();
+        if ($u->vendeur) {
+            $u->vendeur->update(['statut_validation' => 'suspendu']);
+        }
+        if ($u->livreur) {
+            $u->livreur->update(['statut_validation' => 'suspendu', 'statut_disponibilite' => 'indisponible']);
+        }
+        AuditLogger::log($request->user(), 'suspendre_utilisateur', 'utilisateurs', 'User', $u->id, ['statut_compte' => $statutAvant], ['statut_compte' => 'suspendu', 'motif' => $validated['motif']], $request);
+        return response()->json(['success' => true, 'message' => 'Compte suspendu.']);
+    }
+
+    // DELETE /api/admin/utilisateurs/{id} — suppression définitive d'un compte client/vendeur/
+    // livreur (ex : comptes de test créés pendant le développement). Volontairement bloqué si des
+    // données réelles en dépendent : clients/vendeurs/livreurs sont référencés par une clé étrangère
+    // stricte (RESTRICT) depuis commandes/produits/retraits/etc., donc la suppression échoue au
+    // niveau base si le compte a la moindre activité réelle — c'est ce qui empêche de casser
+    // l'historique d'une vraie commande, pas une simple vérification applicative qu'on pourrait
+    // oublier de mettre à jour. Les comptes administrateur ne passent pas par cet écran.
+    public function supprimerUtilisateur(Request $request, string $id): JsonResponse
+    {
+        $user = User::findOrFail($id);
+        if ($user->type_utilisateur === 'administrateur') {
+            return response()->json(['success' => false, 'message' => 'Un compte administrateur ne peut pas être supprimé depuis cet écran.'], 400);
+        }
+        $avant = $user->only(['nom', 'prenom', 'email', 'telephone', 'type_utilisateur']);
+
+        try {
+            DB::transaction(function () use ($user) {
+                $user->tokens()->delete();
+                $user->delete();
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            if ($e->getCode() === '23503') {
+                return response()->json(['success' => false, 'message' => "Ce compte a des commandes, produits ou autres données liées — suppression impossible tant qu'elles existent."], 400);
+            }
+            throw $e;
+        }
+
+        AuditLogger::log($request->user(), 'supprimer_utilisateur', 'utilisateurs', 'User', $id, $avant, null, $request);
+        return response()->json(['success' => true, 'message' => 'Compte supprimé.']);
     }
 
     public function vendeurs(Request $request): JsonResponse
     {
         $q = Vendeur::with('user')->orderBy('created_at','desc');
         if ($s = $request->get('statut')) $q->where('statut_validation', $s);
+        // Filtre par type de boutique : nécessaire depuis que categorie_principale est devenu
+        // l'axe de navigation principal côté client (parcours "boutique d'abord") — un admin qui
+        // modère un type précis n'avait auparavant aucun moyen de restreindre la liste.
+        if ($type = $request->get('categorie_principale')) $q->where('categorie_principale', $type);
         return response()->json(['success'=>true,'data'=>$q->paginate(20)]);
     }
 
@@ -640,25 +803,94 @@ class AdminController extends Controller
                 'commissions_en_attente' => (float) $commissionsEnAttente,
             ],
             'retraits_recents' => RetraitVendeur::where('vendeur_id', $id)->orderByDesc('date_demande')->take(10)->get(),
+            // Aperçu des produits de la boutique (TOUS les statuts, pas juste ceux publiquement
+            // visibles) : sans ça, un admin ne pouvait pas prévisualiser ce qu'un client voit
+            // réellement en visitant la fiche boutique côté catalogue (voir CatalogueController::
+            // produitsVendeur, qui lui exclut les boutiques fermées et n'existe que côté public).
+            'produits' => (clone $produitsQuery)->with('categorie')->orderByDesc('created_at')->take(50)->get(),
         ]]);
+    }
+
+    // PUT /api/admin/vendeurs/{id} — modération des informations publiques d'une boutique
+    // (type, horaires, message, photo). Jusqu'ici seul le vendeur lui-même pouvait modifier ces
+    // champs (VendeurController::mettreAJourProfil) : un admin n'avait aucun moyen de corriger une
+    // catégorisation erronée ou de retirer une photo/un message inapproprié sans suspendre tout le
+    // compte. photo_boutique accepte explicitement `null` pour permettre de la retirer (pas de
+    // téléversement depuis l'admin : uniquement le vendeur peut en fournir une nouvelle).
+    public function modifierVendeur(Request $request, string $id): JsonResponse
+    {
+        $vendeur = Vendeur::findOrFail($id);
+        $validated = $request->validate([
+            'categorie_principale' => 'sometimes|string|in:' . implode(',', TypeBoutique::libellesValides()),
+            'horaires_ouverture'   => 'sometimes|nullable|string|max:255',
+            'message_boutique'     => 'sometimes|nullable|string|max:500',
+            'photo_boutique'       => 'sometimes|nullable|string',
+        ]);
+
+        $avant = $vendeur->only(array_keys($validated));
+        $vendeur->update($validated);
+
+        AuditLogger::log($request->user(), 'modifier_vendeur', 'vendeurs', 'Vendeur', $vendeur->id, $avant, $validated, $request);
+        return response()->json(['success' => true, 'message' => 'Boutique mise à jour.', 'data' => $vendeur->fresh()]);
     }
 
     public function validerVendeur(Request $request, string $id): JsonResponse
     {
-        $v = Vendeur::findOrFail($id);
+        $v = Vendeur::with('user')->findOrFail($id);
         $statutAvant = $v->statut_validation;
-        $v->update(['statut_validation'=>'valide']);
-        AuditLogger::log($request->user(), 'valider_vendeur', 'vendeurs', 'Vendeur', $v->id, ['statut_validation'=>$statutAvant], ['statut_validation'=>'valide'], $request);
-        return response()->json(['success'=>true,'message'=>'Vendeur validé.']);
+        $v->update(['statut_validation' => 'valide']);
+
+        if ($v->user) {
+            $v->user->update(['statut_compte' => 'actif']);
+            Notification::create([
+                'user_id'           => $v->user->id,
+                'titre'              => 'Compte Vendeur Validé',
+                'message'            => 'Félicitations ! Votre compte vendeur a été validé par un administrateur. Vous pouvez désormais ajouter vos produits et ouvrir votre boutique.',
+                'type_notification' => 'vendeur_valide',
+                'statut_lecture'     => false,
+            ]);
+            try {
+                app(PushService::class)->envoyerAUtilisateur(
+                    $v->user,
+                    'Compte Vendeur Validé ✅',
+                    'Votre compte vendeur a été validé. Vous pouvez désormais publier vos produits !',
+                    ['type' => 'vendeur_validation', 'statut' => 'valide']
+                );
+            } catch (\Throwable $e) {}
+        }
+
+        AuditLogger::log($request->user(), 'valider_vendeur', 'vendeurs', 'Vendeur', $v->id, ['statut_validation' => $statutAvant], ['statut_validation' => 'valide'], $request);
+        return response()->json(['success' => true, 'message' => 'Vendeur validé.']);
     }
 
     public function suspendreVendeur(Request $request, string $id): JsonResponse
     {
-        $v = Vendeur::findOrFail($id);
+        $v = Vendeur::with('user')->findOrFail($id);
         $statutAvant = $v->statut_validation;
-        $v->update(['statut_validation'=>'suspendu']);
-        AuditLogger::log($request->user(), 'suspendre_vendeur', 'vendeurs', 'Vendeur', $v->id, ['statut_validation'=>$statutAvant], ['statut_validation'=>'suspendu'], $request);
-        return response()->json(['success'=>true,'message'=>'Vendeur suspendu.']);
+        $v->update(['statut_validation' => 'suspendu']);
+
+        if ($v->user) {
+            $v->user->update(['statut_compte' => 'suspendu']);
+            $v->user->tokens()->delete();
+            Notification::create([
+                'user_id'           => $v->user->id,
+                'titre'              => 'Compte Vendeur Suspendu',
+                'message'            => 'Votre compte vendeur a été suspendu par l\'administration. Veuillez contacter le support.',
+                'type_notification' => 'vendeur_suspendu',
+                'statut_lecture'     => false,
+            ]);
+            try {
+                app(PushService::class)->envoyerAUtilisateur(
+                    $v->user,
+                    'Compte Vendeur Suspendu ⚠️',
+                    'Votre compte vendeur a été suspendu par l\'administration.',
+                    ['type' => 'vendeur_validation', 'statut' => 'suspendu']
+                );
+            } catch (\Throwable $e) {}
+        }
+
+        AuditLogger::log($request->user(), 'suspendre_vendeur', 'vendeurs', 'Vendeur', $v->id, ['statut_validation' => $statutAvant], ['statut_validation' => 'suspendu'], $request);
+        return response()->json(['success' => true, 'message' => 'Vendeur suspendu.']);
     }
 
     public function livreurs(Request $request): JsonResponse
@@ -692,20 +924,61 @@ class AdminController extends Controller
 
     public function validerLivreur(Request $request, string $id): JsonResponse
     {
-        $l = Livreur::findOrFail($id);
-        $avant = ['statut_validation'=>$l->statut_validation,'statut_disponibilite'=>$l->statut_disponibilite];
-        $l->update(['statut_validation'=>'valide','statut_disponibilite'=>'disponible']);
-        AuditLogger::log($request->user(), 'valider_livreur', 'livreurs', 'Livreur', $l->id, $avant, ['statut_validation'=>'valide','statut_disponibilite'=>'disponible'], $request);
-        return response()->json(['success'=>true,'message'=>'Livreur validé.']);
+        $l = Livreur::with('user')->findOrFail($id);
+        $avant = ['statut_validation' => $l->statut_validation, 'statut_disponibilite' => $l->statut_disponibilite];
+        $l->update(['statut_validation' => 'valide', 'statut_disponibilite' => 'disponible']);
+
+        if ($l->user) {
+            $l->user->update(['statut_compte' => 'actif']);
+            Notification::create([
+                'user_id'           => $l->user->id,
+                'titre'              => 'Compte Livreur Validé',
+                'message'            => 'Votre profil livreur a été approuvé. Vous pouvez passer en mode disponible et recevoir des livraisons.',
+                'type_notification' => 'livreur_valide',
+                'statut_lecture'     => false,
+            ]);
+            try {
+                app(PushService::class)->envoyerAUtilisateur(
+                    $l->user,
+                    'Compte Livreur Validé ✅',
+                    'Votre profil livreur a été approuvé par l\'administration.',
+                    ['type' => 'livreur_validation', 'statut' => 'valide']
+                );
+            } catch (\Throwable $e) {}
+        }
+
+        AuditLogger::log($request->user(), 'valider_livreur', 'livreurs', 'Livreur', $l->id, $avant, ['statut_validation' => 'valide', 'statut_disponibilite' => 'disponible'], $request);
+        return response()->json(['success' => true, 'message' => 'Livreur validé.']);
     }
 
     public function suspendreLivreur(Request $request, string $id): JsonResponse
     {
-        $l = Livreur::findOrFail($id);
-        $avant = ['statut_validation'=>$l->statut_validation,'statut_disponibilite'=>$l->statut_disponibilite];
-        $l->update(['statut_validation'=>'suspendu','statut_disponibilite'=>'indisponible']);
-        AuditLogger::log($request->user(), 'suspendre_livreur', 'livreurs', 'Livreur', $l->id, $avant, ['statut_validation'=>'suspendu','statut_disponibilite'=>'indisponible'], $request);
-        return response()->json(['success'=>true,'message'=>'Livreur suspendu.']);
+        $l = Livreur::with('user')->findOrFail($id);
+        $avant = ['statut_validation' => $l->statut_validation, 'statut_disponibilite' => $l->statut_disponibilite];
+        $l->update(['statut_validation' => 'suspendu', 'statut_disponibilite' => 'indisponible']);
+
+        if ($l->user) {
+            $l->user->update(['statut_compte' => 'suspendu']);
+            $l->user->tokens()->delete();
+            Notification::create([
+                'user_id'           => $l->user->id,
+                'titre'              => 'Compte Livreur Suspendu',
+                'message'            => 'Votre compte livreur a été suspendu par l\'administration.',
+                'type_notification' => 'livreur_suspendu',
+                'statut_lecture'     => false,
+            ]);
+            try {
+                app(PushService::class)->envoyerAUtilisateur(
+                    $l->user,
+                    'Compte Livreur Suspendu ⚠️',
+                    'Votre compte livreur a été suspendu par l\'administration.',
+                    ['type' => 'livreur_validation', 'statut' => 'suspendu']
+                );
+            } catch (\Throwable $e) {}
+        }
+
+        AuditLogger::log($request->user(), 'suspendre_livreur', 'livreurs', 'Livreur', $l->id, $avant, ['statut_validation' => 'suspendu', 'statut_disponibilite' => 'indisponible'], $request);
+        return response()->json(['success' => true, 'message' => 'Livreur suspendu.']);
     }
 
     public function commandes(Request $request): JsonResponse
@@ -1157,6 +1430,74 @@ class AdminController extends Controller
         return response()->json(['success'=>true,'message'=>'Catégorie supprimée.']);
     }
 
+    // GET /api/admin/types-boutique — la liste complète des types de boutique gérés par un admin
+    // (App\Models\TypeBoutique), avec leur logo optionnel. Contrairement à
+    // CatalogueController::vendeurTypesAvecLogos() (public, filtré aux types réellement utilisés par
+    // une boutique ouverte/validée), cette liste est complète : un admin doit pouvoir créer/préparer
+    // le logo d'un type avant même qu'un premier vendeur ne le choisisse.
+    public function typesBoutique(Request $request): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => TypeBoutique::orderBy('type')->get()]);
+    }
+
+    public function ajouterTypeBoutique(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'type' => 'required|string|max:150|unique:types_boutique,type',
+            'logo' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:3072',
+        ]);
+        unset($validated['logo']);
+        if ($request->hasFile('logo')) {
+            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'public');
+        }
+        $typeBoutique = TypeBoutique::create($validated);
+        AuditLogger::log($request->user(), 'creer_type_boutique', 'catalogue', 'TypeBoutique', $typeBoutique->id, null, $validated, $request);
+        return response()->json(['success' => true, 'data' => $typeBoutique], 201);
+    }
+
+    public function modifierTypeBoutique(Request $request, string $id): JsonResponse
+    {
+        $typeBoutique = TypeBoutique::findOrFail($id);
+        $validated = $request->validate([
+            'type' => 'sometimes|string|max:150|unique:types_boutique,type,' . $typeBoutique->id,
+            'logo' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:3072',
+        ]);
+        unset($validated['logo']);
+        $avant = $typeBoutique->only(['type', 'logo']);
+        if ($request->hasFile('logo')) {
+            if ($typeBoutique->logo) {
+                Storage::disk('public')->delete($typeBoutique->logo);
+            }
+            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'public');
+        }
+
+        // Un type renommé reste le même type pour les boutiques qui l'avaient déjà choisi — sinon
+        // elles se retrouveraient silencieusement avec une categorie_principale qui n'existe plus
+        // dans la liste gérée par l'admin (et redeviendraient rejetées à la moindre autre
+        // modification de profil, la validation étant faite contre TypeBoutique::libellesValides()).
+        if (!empty($validated['type']) && $validated['type'] !== $typeBoutique->type) {
+            Vendeur::where('categorie_principale', $typeBoutique->type)->update(['categorie_principale' => $validated['type']]);
+        }
+
+        $typeBoutique->update($validated);
+        AuditLogger::log($request->user(), 'modifier_type_boutique', 'catalogue', 'TypeBoutique', $typeBoutique->id, $avant, $validated, $request);
+        return response()->json(['success' => true, 'data' => $typeBoutique->fresh()]);
+    }
+
+    public function supprimerTypeBoutique(Request $request, string $id): JsonResponse
+    {
+        $typeBoutique = TypeBoutique::findOrFail($id);
+        if (Vendeur::where('categorie_principale', $typeBoutique->type)->exists()) {
+            return response()->json(['success' => false, 'message' => 'Ce type de boutique est utilisé par au moins un vendeur.'], 400);
+        }
+        if ($typeBoutique->logo) {
+            Storage::disk('public')->delete($typeBoutique->logo);
+        }
+        AuditLogger::log($request->user(), 'supprimer_type_boutique', 'catalogue', 'TypeBoutique', $typeBoutique->id, $typeBoutique->only(['type']), null, $request);
+        $typeBoutique->delete();
+        return response()->json(['success' => true, 'message' => 'Type de boutique supprimé.']);
+    }
+
     public function zones(Request $request): JsonResponse
     {
         return response()->json(['success'=>true,'data'=>ZoneLivraison::all()]);
@@ -1509,6 +1850,55 @@ class AdminController extends Controller
         AuditLogger::log($request->user(), 'annuler_campagne_notification', 'notifications', 'CampagneNotification', $campagne->id, $campagne->only(['titre']), null, $request);
         $campagne->delete();
         return response()->json(['success' => true, 'message' => 'Campagne annulée.']);
+    }
+
+    // GET /api/admin/litige-motifs — remplace l'ancienne constante LitigeController::MOTIFS,
+    // gérable ici plutôt que codée en dur indépendamment côté backend/mobile/web.
+    public function litigeMotifs(Request $request): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => LitigeMotif::orderBy('code')->get()]);
+    }
+
+    public function ajouterLitigeMotif(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'code' => 'required|string|max:100|alpha_dash|unique:litige_motifs,code',
+            'libelle' => 'required|string|max:150',
+        ]);
+        $motif = LitigeMotif::create($validated);
+        AuditLogger::log($request->user(), 'creer_litige_motif', 'litiges', 'LitigeMotif', $motif->id, null, $validated, $request);
+        return response()->json(['success' => true, 'data' => $motif], 201);
+    }
+
+    public function modifierLitigeMotif(Request $request, string $id): JsonResponse
+    {
+        $motif = LitigeMotif::findOrFail($id);
+        $validated = $request->validate([
+            'code' => 'sometimes|string|max:100|alpha_dash|unique:litige_motifs,code,' . $motif->id,
+            'libelle' => 'sometimes|string|max:150',
+        ]);
+        $avant = $motif->only(['code', 'libelle']);
+
+        // Un code renommé reste le même motif pour les litiges déjà ouverts sous ce code — sinon
+        // ils se retrouveraient avec un `motif` qui n'existe plus dans la liste gérée par l'admin.
+        if (!empty($validated['code']) && $validated['code'] !== $motif->code) {
+            Litige::where('motif', $motif->code)->update(['motif' => $validated['code']]);
+        }
+
+        $motif->update($validated);
+        AuditLogger::log($request->user(), 'modifier_litige_motif', 'litiges', 'LitigeMotif', $motif->id, $avant, $validated, $request);
+        return response()->json(['success' => true, 'data' => $motif->fresh()]);
+    }
+
+    public function supprimerLitigeMotif(Request $request, string $id): JsonResponse
+    {
+        $motif = LitigeMotif::findOrFail($id);
+        if (Litige::where('motif', $motif->code)->exists()) {
+            return response()->json(['success' => false, 'message' => 'Ce motif est utilisé par au moins un litige.'], 400);
+        }
+        AuditLogger::log($request->user(), 'supprimer_litige_motif', 'litiges', 'LitigeMotif', $motif->id, $motif->only(['code', 'libelle']), null, $request);
+        $motif->delete();
+        return response()->json(['success' => true, 'message' => 'Motif supprimé.']);
     }
 
     public function litiges(Request $request): JsonResponse

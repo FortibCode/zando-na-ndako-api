@@ -209,6 +209,9 @@ public function revenus(Request $request): JsonResponse
 
         return response()->json(['success'=>true,'data'=>[
             'solde_disponible'=>$l->solde_disponible,
+            // Valeur actuelle du réglage (voir /admin/parametres, clé retrait_montant_minimum) —
+            // l'écran de retrait mobile ne doit plus la recopier en dur (1000).
+            'retrait_montant_minimum'=>(int) \App\Models\ParametrePlateforme::valeur('retrait_montant_minimum', '1000'),
             'mois'=>$m,'annee'=>$a,
             // Mois (par défaut)
             'nb_livraisons'=>$mois->count(),'remuneration'=>$sum($mois),

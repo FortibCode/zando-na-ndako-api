@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api\Client;
 use App\Http\Controllers\Controller;
 use App\Models\Commande;
 use App\Models\Litige;
+use App\Models\LitigeMotif;
 use App\Services\PushService;
 use App\Support\AuditLogger;
 use App\Support\DashboardCache;
@@ -13,19 +14,19 @@ use Illuminate\Http\Request;
 
 class LitigeController extends Controller
 {
-    // Motifs de litige — aucune liste n'existait déjà ailleurs dans le projet pour ce champ
-    // (litiges.motif est un simple varchar non contraint), validée uniquement côté application.
-    private const MOTIFS = [
-        'produit_non_recu', 'produit_incorrect', 'produit_endommage',
-        'produit_non_conforme', 'article_manquant', 'probleme_livraison',
-        'probleme_paiement', 'probleme_remboursement', 'autre',
-    ];
+    // GET /api/litiges/motifs — liste des motifs valides (App\Models\LitigeMotif, gérée par un
+    // admin via /admin/litige-motifs), pour que mobile/web construisent leur sélecteur sans coder
+    // en dur une liste qui pourrait diverger de la validation ci-dessous.
+    public function motifs(): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => LitigeMotif::orderBy('code')->get(['code', 'libelle'])]);
+    }
 
     // POST /api/commandes/{id}/litige
     public function ouvrir(Request $request, string $commandeId): JsonResponse
     {
         $validated = $request->validate([
-            'motif' => 'required|string|in:' . implode(',', self::MOTIFS),
+            'motif' => 'required|string|in:' . implode(',', LitigeMotif::codesValides()),
             'description' => 'required|string|max:2000',
         ]);
 
