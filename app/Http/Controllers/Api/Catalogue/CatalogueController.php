@@ -39,7 +39,10 @@ class CatalogueController extends Controller
         if ($s = $request->get('search')) $q->where('nom_produit','like',"%{$s}%");
         if ($min = $request->get('prix_min')) $q->where('prix_unitaire','>=',$min);
         if ($max = $request->get('prix_max')) $q->where('prix_unitaire','<=',$max);
-        return response()->json(['success'=>true,'data'=>$q->paginate(20)]);
+        // per_page ajustable par l'appelant (ex: 5 pour la vitrine "Tous nos produits" de l'accueil
+        // client, web comme mobile) — borné pour éviter un appel abusif, 20 par défaut inchangé.
+        $perPage = min(max((int) $request->get('per_page', 20), 1), 50);
+        return response()->json(['success'=>true,'data'=>$q->paginate($perPage)]);
     }
 
     public function populaires(Request $request): JsonResponse
@@ -167,23 +170,17 @@ class CatalogueController extends Controller
         return response()->json(['success' => true, 'data' => \App\Models\TypeBoutique::libellesValides()]);
     }
 
-    // GET /api/vendeurs/types-logos — mêmes types que vendeurTypes() ci-dessus (réellement en
-    // usage, boutiques ouvertes/validées), avec le logo envoyé par un admin s'il existe (voir
-    // App\Models\TypeBoutique, géré via /admin/types-boutique). `logo` vaut null tant qu'aucun admin
-    // n'a rien envoyé pour ce type — le frontend retombe alors sur une icône générique, jamais une
-    // image inventée.
+    // GET /api/vendeurs/types-logos — la liste COMPLÈTE des types de boutique gérés par l'admin
+    // (App\Models\TypeBoutique, voir /admin/types-boutique), avec leur logo s'il existe. Affiche
+    // volontairement aussi les types sans aucun vendeur pour l'instant (contrairement à
+    // vendeurTypes() ci-dessus, qui ne liste que ceux réellement en usage) : la page qui liste les
+    // boutiques d'un type gère déjà proprement le cas "aucune boutique pour l'instant", donc un type
+    // vide reste visible plutôt que de disparaître complètement de l'accueil. `logo` vaut null tant
+    // qu'aucun admin n'a rien envoyé pour ce type — le frontend retombe alors sur une icône
+    // générique, jamais une image inventée.
     public function vendeurTypesAvecLogos(Request $request): JsonResponse
     {
-        $types = \App\Models\Vendeur::where('statut_validation', 'valide')
-            ->where('statut_boutique', '!=', 'fermee')
-            ->whereNotNull('categorie_principale')
-            ->distinct()
-            ->orderBy('categorie_principale')
-            ->pluck('categorie_principale');
-
-        $logos = \App\Models\TypeBoutique::whereIn('type', $types)->pluck('logo', 'type');
-
-        $data = $types->map(fn ($type) => ['type' => $type, 'logo' => $logos[$type] ?? null])->values();
+        $data = \App\Models\TypeBoutique::orderBy('type')->get(['type', 'logo']);
 
         return response()->json(['success' => true, 'data' => $data]);
     }

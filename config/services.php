@@ -56,6 +56,13 @@ return [
         'mode'      => env('PAYPAL_MODE', 'sandbox'), // 'sandbox' ou 'live'
     ],
 
+    // Client(s) OAuth Google (console.cloud.google.com > APIs & Services > Identifiants) — un id_token
+    // reçu du web ou du mobile peut porter n'importe lequel de ces "aud" selon la plateforme d'origine,
+    // d'où la liste plutôt qu'un identifiant unique. Vide tant que le projet Google Cloud n'existe pas.
+    'google' => [
+        'client_ids' => array_values(array_filter(array_map('trim', explode(',', (string) env('GOOGLE_CLIENT_IDS', ''))))),
+    ],
+
     'mtn_momo' => [
         'environment' => env('MTN_MOMO_ENVIRONMENT', 'sandbox'),
         'currency'    => env('MTN_MOMO_CURRENCY', 'XAF'),
@@ -69,6 +76,14 @@ return [
             'api_key'          => env('MTN_MOMO_DISBURSEMENT_API_KEY'),
             'subscription_key' => env('MTN_MOMO_DISBURSEMENT_SUBSCRIPTION_KEY'),
         ],
+    ],
+
+    'airtel_money' => [
+        'environment'   => env('AIRTEL_MONEY_ENVIRONMENT', 'sandbox'),
+        'country'       => env('AIRTEL_MONEY_COUNTRY', 'CG'),
+        'currency'      => env('AIRTEL_MONEY_CURRENCY', 'XAF'),
+        'client_id'     => env('AIRTEL_MONEY_CLIENT_ID'),
+        'client_secret' => env('AIRTEL_MONEY_CLIENT_SECRET'),
     ],
 
 ];

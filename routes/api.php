@@ -39,6 +39,7 @@ use App\Http\Controllers\Api\User\UserController;
 // === AUTHENTIFICATION ===
 Route::post('/register', [AuthController::class, 'register']);
 Route::post('/login', [AuthController::class, 'login']);
+Route::post('/auth/google', [AuthController::class, 'loginWithGoogle']);
 Route::post('/logout', [AuthController::class, 'logout']);
 Route::post('/forgot-password', [AuthController::class, 'forgotPassword']);
 Route::post('/reset-password', [AuthController::class, 'resetPassword']);
@@ -175,8 +176,6 @@ Route::middleware(['auth:sanctum'])->group(function () {
             Route::post('/stripe/confirm', [PaymentController::class, 'confirmerStripe']);
             Route::post('/paypal/init', [PaymentController::class, 'initierPayPal']);
             Route::post('/paypal/confirm', [PaymentController::class, 'confirmerPayPal']);
-            Route::post('/carte-locale/init', [PaymentController::class, 'initierCarteLocale']);
-            Route::post('/carte-locale/confirm', [PaymentController::class, 'confirmerCarteLocale']);
             Route::post('/mtn-momo/init', [PaymentController::class, 'initierMtnMoMo']);
             Route::post('/mtn-momo/confirm', [PaymentController::class, 'confirmerMtnMoMo']);
             Route::post('/airtel-money/init', [PaymentController::class, 'initierAirtelMoney']);
@@ -344,6 +343,7 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
             Route::post('/{id}/attribuer-vendeur', [AdminController::class, 'attribuerVendeurCommande'])->middleware('permission:assign_commandes');
             Route::put('/{id}/statut', [AdminController::class, 'modifierStatutCommande'])->middleware('permission:edit_commande_status');
             Route::post('/{id}/rembourser', [AdminController::class, 'rembourserCommande'])->middleware('permission:refund_commandes');
+            Route::delete('/{id}', [AdminController::class, 'supprimerCommande'])->middleware('permission:delete_commandes');
         });
 
         Route::prefix('livraisons')->group(function () {

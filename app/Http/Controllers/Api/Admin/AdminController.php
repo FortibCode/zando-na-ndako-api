@@ -197,7 +197,7 @@ class AdminController extends Controller
         if ($noteMax = $request->get('note_max')) $q->where('note', '<=', $noteMax);
         if ($search = $request->get('search')) $q->where('commentaire', 'like', "%{$search}%");
 
-        $paginated = $q->paginate(20);
+        $paginated = $q->paginate((int) $request->get('per_page', 20));
         $paginated->getCollection()->transform(function (NotationAvis $a) {
             return [
                 'id' => $a->id,
@@ -273,7 +273,7 @@ class AdminController extends Controller
         if ($statut = $request->get('statut')) $q->where('statut', $statut);
         if ($debut = $request->get('date_debut')) $q->whereDate('created_at', '>=', $debut);
         if ($fin = $request->get('date_fin')) $q->whereDate('created_at', '<=', $fin);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     // ----------------------------------------------------------------
@@ -287,7 +287,7 @@ class AdminController extends Controller
         // qui n'affiche plus "10%" en dur dans sa description.
         return response()->json([
             'success' => true,
-            'data' => $q->paginate(20),
+            'data' => $q->paginate((int) $request->get('per_page', 20)),
             'taux_commission_vendeur' => ParametrePlateforme::valeur('taux_commission_vendeur', '10'),
         ]);
     }
@@ -311,7 +311,7 @@ class AdminController extends Controller
     {
         $q = RetraitVendeur::with(['vendeur.user'])->orderBy('date_demande', 'desc');
         if ($statut = $request->get('statut')) $q->where('statut', $statut);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function validerRetraitVendeur(Request $request, string $id): JsonResponse
@@ -344,7 +344,7 @@ class AdminController extends Controller
     {
         $q = RetraitLivreur::with(['livreur.user'])->orderBy('date_demande', 'desc');
         if ($statut = $request->get('statut')) $q->where('statut', $statut);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function validerRetraitLivreur(Request $request, string $id): JsonResponse
@@ -628,7 +628,7 @@ class AdminController extends Controller
         if ($s = $request->get('statut')) $q->where('statut_compte', $s);
         if ($request->boolean('diaspora')) $q->whereHas('client', fn($cq) => $cq->where('est_diaspora', true));
         if ($search = $request->get('search')) $q->where(fn($q) => $q->where('nom','like',"%{$search}%")->orWhere('email','like',"%{$search}%")->orWhere('telephone','like',"%{$search}%"));
-        return response()->json(['success'=>true,'data'=>$q->orderBy('date_inscription','desc')->paginate(25)]);
+        return response()->json(['success'=>true,'data'=>$q->orderBy('date_inscription','desc')->paginate((int) $request->get('per_page', 25))]);
     }
 
     public function creerUtilisateur(Request $request): JsonResponse
@@ -690,6 +690,7 @@ class AdminController extends Controller
         if ($user->livreur && $user->livreur->statut_validation !== 'valide') {
             $user->livreur->update(['statut_validation' => 'valide', 'statut_disponibilite' => 'disponible']);
         }
+        DashboardCache::bump();
         AuditLogger::log($request->user(), 'activer_utilisateur', 'utilisateurs', 'User', $user->id, ['statut_compte' => $statutAvant], ['statut_compte' => 'actif'], $request);
         return response()->json(['success' => true, 'message' => 'Compte activé.']);
     }
@@ -731,6 +732,7 @@ class AdminController extends Controller
         if ($u->livreur) {
             $u->livreur->update(['statut_validation' => 'suspendu', 'statut_disponibilite' => 'indisponible']);
         }
+        DashboardCache::bump();
         AuditLogger::log($request->user(), 'suspendre_utilisateur', 'utilisateurs', 'User', $u->id, ['statut_compte' => $statutAvant], ['statut_compte' => 'suspendu', 'motif' => $validated['motif']], $request);
         return response()->json(['success' => true, 'message' => 'Compte suspendu.']);
     }
@@ -752,16 +754,32 @@ class AdminController extends Controller
 
         try {
             DB::transaction(function () use ($user) {
+                // Comme pour supprimerCommande() : les données qui appartiennent en propre à ce
+                // compte (messagerie interne avec l'admin, demandes de retrait, promotions,
+                // produits) sont supprimées avec lui plutôt que de bloquer — un vendeur de test qui
+                // a par exemple ajouté un produit ou écrit à l'admin pendant les tests n'a que ça
+                // comme "activité". Seule une VRAIE commande fait encore échouer la transaction
+                // (contrainte stricte sur produits/commandes), avec le message générique ci-dessous.
+                if ($user->vendeur) {
+                    $user->vendeur->messages()->delete();
+                    $user->vendeur->retraits()->delete();
+                    $user->vendeur->promotionsVendeur()->delete();
+                    $user->vendeur->produits()->delete();
+                }
+                if ($user->livreur) {
+                    $user->livreur->retraits()->delete();
+                }
                 $user->tokens()->delete();
                 $user->delete();
             });
         } catch (\Illuminate\Database\QueryException $e) {
             if ($e->getCode() === '23503') {
-                return response()->json(['success' => false, 'message' => "Ce compte a des commandes, produits ou autres données liées — suppression impossible tant qu'elles existent."], 400);
+                return response()->json(['success' => false, 'message' => "Ce compte a des commandes ou d'autres données réelles liées — suppression impossible tant qu'elles existent."], 400);
             }
             throw $e;
         }
 
+        DashboardCache::bump();
         AuditLogger::log($request->user(), 'supprimer_utilisateur', 'utilisateurs', 'User', $id, $avant, null, $request);
         return response()->json(['success' => true, 'message' => 'Compte supprimé.']);
     }
@@ -774,7 +792,7 @@ class AdminController extends Controller
         // l'axe de navigation principal côté client (parcours "boutique d'abord") — un admin qui
         // modère un type précis n'avait auparavant aucun moyen de restreindre la liste.
         if ($type = $request->get('categorie_principale')) $q->where('categorie_principale', $type);
-        return response()->json(['success'=>true,'data'=>$q->paginate(20)]);
+        return response()->json(['success'=>true,'data'=>$q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function vendeurDetail(Request $request, string $id): JsonResponse
@@ -988,7 +1006,7 @@ class AdminController extends Controller
         if ($clientId = $request->get('client_id')) $q->where('client_id', $clientId);
         if ($mois = $request->get('mois')) $q->whereMonth('date_commande', $mois);
         if ($annee = $request->get('annee')) $q->whereYear('date_commande', $annee);
-        return response()->json(['success'=>true,'data'=>$q->paginate(20)]);
+        return response()->json(['success'=>true,'data'=>$q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function commandeDetail(Request $request, string $id): JsonResponse
@@ -1026,9 +1044,10 @@ class AdminController extends Controller
         }
 
         // Stripe et PayPal sont les deux seules méthodes avec une vraie passerelle réversible via
-        // API dans cette app (carte_locale/mtn_momo/airtel_money/paiement_livraison n'ont aucune
-        // intégration processeur — leur "remboursement" ne peut être qu'un enregistrement manuel,
-        // à traiter hors-app, comme le sont déjà les retraits).
+        // API dans cette app (mtn_momo/airtel_money n'exposent qu'une API Collections, sans
+        // remboursement ; paiement_livraison n'a jamais de paiement électronique à rembourser) —
+        // leur "remboursement" ne peut être qu'un enregistrement manuel, à traiter hors-app, comme
+        // le sont déjà les retraits.
         $message = 'Remboursement enregistré — à traiter manuellement auprès du prestataire.';
         if ($paiement->methode === 'stripe' && $paiement->reference_transaction_externe) {
             $result = $this->rembourserStripe($paiement->reference_transaction_externe);
@@ -1050,6 +1069,70 @@ class AdminController extends Controller
             ['statut' => 'valide'], ['statut' => 'rembourse', 'motif' => $validated['motif']], $request);
 
         return response()->json(['success' => true, 'message' => $message]);
+    }
+
+    // DELETE /api/admin/commandes/{id} — suppression définitive d'une commande de test ou annulée.
+    // Volontairement limité aux statuts "annulee" et "confirmee" (commandes jamais entamées) pour
+    // ne jamais effacer l'historique d'une livraison réelle. Toutes les données liées (lignes,
+    // livraison, paiement associé) sont supprimées dans la même transaction — sans ça, les clés
+    // étrangères RESTRICT bloqueraient la suppression au niveau base.
+    public function supprimerCommande(Request $request, string $id): JsonResponse
+    {
+        $commande = Commande::with(['lignes', 'livraison', 'paiement'])->findOrFail($id);
+
+        $statutsAutorises = ['annulee', 'confirmee'];
+        if (!in_array($commande->statut_commande, $statutsAutorises, true)) {
+            return response()->json([
+                'success' => false,
+                'message' => "Seules les commandes annulées ou non démarrées (confirmée) peuvent être supprimées. Statut actuel : {$commande->statut_commande}.",
+            ], 400);
+        }
+
+        $avant = [
+            'numero_commande' => $commande->numero_commande,
+            'statut_commande' => $commande->statut_commande,
+            'montant_total'   => $commande->montant_total,
+        ];
+
+        // notations_avis et litiges référencent aussi commandes.id avec une contrainte stricte,
+        // mais contrairement à livraison/paiement/commission (simple comptabilité générée pour
+        // CHAQUE commande), un vrai litige ou un vrai avis a sa propre valeur : les effacer en
+        // silence ferait disparaître un historique de dispute ou une note honnête juste parce que
+        // la commande sous-jacente a été nettoyée. On bloque donc explicitement plutôt que de
+        // cascader, avec un message qui dit pourquoi.
+        if ($commande->litige()->exists()) {
+            return response()->json(['success' => false, 'message' => 'Cette commande a un litige associé — supprimez ou traitez le litige avant de supprimer la commande.'], 400);
+        }
+        if ($commande->notations()->exists()) {
+            return response()->json(['success' => false, 'message' => 'Cette commande a un avis client associé — impossible de la supprimer sans perdre cette notation.'], 400);
+        }
+
+        try {
+            DB::transaction(function () use ($commande) {
+                // Supprimer les entités liées qui ne sont pas en CASCADE dans la base — la
+                // commission (commissions.commande_id, contrainte stricte) manquait ici : toute
+                // commande déjà passée par CommandeController (statut "confirmee" en fait déjà
+                // partie) a une ligne Commission liée, donc la suppression échouait
+                // systématiquement avec une violation de clé étrangère au lieu d'un message clair.
+                $commande->livraison()?->delete();
+                $commande->paiement()?->delete();
+                $commande->commission()?->delete();
+                $commande->lignes()->delete();
+                $commande->delete();
+            });
+        } catch (\Illuminate\Database\QueryException $e) {
+            if ($e->getCode() === '23503') {
+                return response()->json(['success' => false, 'message' => "Cette commande a d'autres données liées qui empêchent sa suppression."], 400);
+            }
+            throw $e;
+        }
+
+        // Sans ça, les statistiques du tableau de bord restaient figées sur leur valeur mise en
+        // cache d'avant la suppression (cache versionné, voir DashboardCache) — une commande
+        // supprimée continuait d'apparaître dans les totaux jusqu'à expiration naturelle du cache.
+        DashboardCache::bump();
+        AuditLogger::log($request->user(), 'supprimer_commande', 'commandes', 'Commande', $id, $avant, null, $request);
+        return response()->json(['success' => true, 'message' => 'Commande supprimée définitivement.']);
     }
 
     // Retourne un message de succès, ou false si l'appel gateway a échoué. En l'absence de clé
@@ -1233,7 +1316,7 @@ class AdminController extends Controller
             ->orderBy('created_at', 'desc');
         if ($s = $request->get('statut')) $q->where('statut_livraison', $s);
         if ($livreurId = $request->get('livreur_id')) $q->where('livreur_id', $livreurId);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function livraisonDetail(Request $request, string $id): JsonResponse
@@ -1500,7 +1583,7 @@ class AdminController extends Controller
 
     public function zones(Request $request): JsonResponse
     {
-        return response()->json(['success'=>true,'data'=>ZoneLivraison::all()]);
+        return response()->json(['success'=>true,'data'=>ZoneLivraison::orderBy('nom_zone')->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function ajouterZone(Request $request): JsonResponse
@@ -1568,7 +1651,7 @@ class AdminController extends Controller
             if (isset($etatConditions[$etat])) $q->tap($etatConditions[$etat]);
         }
 
-        $produits = $q->orderBy('nom_produit')->paginate(20)->withQueryString();
+        $produits = $q->orderBy('nom_produit')->paginate((int) $request->get('per_page', 20))->withQueryString();
 
         $produits->getCollection()->transform(function ($p) use ($seuil) {
             $p->etat_stock = $p->statut_disponibilite === 'rupture' || $p->quantite_stock <= 0
@@ -1749,7 +1832,7 @@ class AdminController extends Controller
             };
         }
         if ($search = $request->get('search')) $q->where('code', 'like', '%' . strtoupper($search) . '%');
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function creerCoupon(Request $request): JsonResponse
@@ -1812,7 +1895,7 @@ class AdminController extends Controller
     {
         $q = CampagneNotification::orderBy('created_at', 'desc');
         if ($statut = $request->get('statut')) $q->where('statut', $statut);
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function creerCampagneNotification(Request $request, NotificationBroadcastService $broadcast): JsonResponse
@@ -1909,7 +1992,7 @@ class AdminController extends Controller
         if ($commandeId = $request->get('commande_id')) $q->where('commande_id', $commandeId);
         if ($debut = $request->get('date_debut')) $q->whereDate('date_ouverture', '>=', $debut);
         if ($fin = $request->get('date_fin')) $q->whereDate('date_ouverture', '<=', $fin);
-        return response()->json(['success'=>true,'data'=>$q->paginate(20)]);
+        return response()->json(['success'=>true,'data'=>$q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function litigeDetail(Request $request, string $id): JsonResponse
@@ -2198,7 +2281,7 @@ class AdminController extends Controller
         if ($categorie = $request->get('categorie')) $q->where('categorie', $categorie);
         if ($priorite = $request->get('priorite')) $q->where('priorite', $priorite);
         if ($request->boolean('non_assignes')) $q->whereNull('admin_assigne_id');
-        return response()->json(['success' => true, 'data' => $q->paginate(20)]);
+        return response()->json(['success' => true, 'data' => $q->paginate((int) $request->get('per_page', 20))]);
     }
 
     public function ticketDetail(Request $request, string $id): JsonResponse
@@ -2295,7 +2378,7 @@ class AdminController extends Controller
     // (tickets support, etc.) — le module complet de gestion des administrateurs viendra plus tard.
     public function listAdministrateurs(Request $request): JsonResponse
     {
-        return response()->json(['success' => true, 'data' => Administrateur::with('user')->orderBy('date_nomination', 'desc')->get()]);
+        return response()->json(['success' => true, 'data' => Administrateur::with('user')->orderBy('date_nomination', 'desc')->paginate((int) $request->get('per_page', 20))]);
     }
 
     // ----------------------------------------------------------------
@@ -2426,6 +2509,6 @@ class AdminController extends Controller
         if ($module = $request->get('module')) $q->where('details->module', $module);
         if ($debut = $request->get('date_debut')) $q->whereDate('date_action', '>=', $debut);
         if ($fin = $request->get('date_fin')) $q->whereDate('date_action', '<=', $fin);
-        return response()->json(['success'=>true,'data'=>$q->paginate(50)]);
+        return response()->json(['success'=>true,'data'=>$q->paginate((int) $request->get('per_page', 50))]);
     }
 }

@@ -14,9 +14,45 @@ use Stripe\Exception\ApiErrorException;
 use Stripe\StripeClient;
 use Illuminate\Support\Str;
 use App\Services\MtnMomoService;
+use App\Services\AirtelMoneyService;
 
 class PaymentController extends Controller
 {
+    // Stripe traite XAF (franc CFA) comme une devise "zéro décimale" : contrairement à EUR/USD où
+    // unit_amount s'exprime en centimes (montant × 100), XAF s'exprime directement en unités
+    // entières. Sans cette distinction, un paiement en FCFA serait facturé 100x le montant réel.
+    // Voir https://stripe.com/docs/currencies#zero-decimal — liste volontairement restreinte aux
+    // devises réellement utilisées par cette application (FCFA local, EUR/USD/GBP/CAD diaspora).
+    private const STRIPE_ZERO_DECIMAL_CURRENCIES = ['xaf'];
+
+    // Convertit le libellé de devise interne de l'app (Commande::devise_paiement, ex. "FCFA") vers
+    // le code ISO 4217 attendu par l'API Stripe (ex. "xaf") — Stripe rejette "fcfa" comme devise
+    // invalide.
+    private function toStripeCurrency(string $devise): string
+    {
+        return strtolower($devise) === 'fcfa' ? 'xaf' : strtolower($devise);
+    }
+
+    // Conversion inverse, pour stocker Paiement::devise dans la même convention que le reste de
+    // l'app (qui utilise "FCFA", jamais le code ISO "XAF").
+    private function fromStripeCurrency(string $currency): string
+    {
+        return strtoupper($currency) === 'XAF' ? 'FCFA' : strtoupper($currency);
+    }
+
+    private function stripeUnitAmount(float $montant, string $stripeCurrency): int
+    {
+        return in_array($stripeCurrency, self::STRIPE_ZERO_DECIMAL_CURRENCIES, true)
+            ? (int) round($montant)
+            : (int) round($montant * 100);
+    }
+
+    private function stripeAmountToMontant(int $amount, string $stripeCurrency): float
+    {
+        return in_array($stripeCurrency, self::STRIPE_ZERO_DECIMAL_CURRENCIES, true)
+            ? (float) $amount
+            : $amount / 100;
+    }
     // POST /api/payment/stripe/init
     //
     // Crée une vraie Checkout Session Stripe dès que STRIPE_SECRET est configurée — le client
@@ -40,15 +76,17 @@ class PaymentController extends Controller
             return response()->json(['success'=>true,'message'=>'Redirection Stripe (simulation, clé non configurée).','data'=>['url'=>$simulatedUrl,'session_id'=>null]]);
         }
 
+        $stripeCurrency = $this->toStripeCurrency($commande->devise_paiement);
+
         try {
             $session = (new StripeClient($secret))->checkout->sessions->create([
                 'mode' => 'payment',
                 'payment_method_types' => ['card'],
                 'line_items' => [[
                     'price_data' => [
-                        'currency'     => strtolower($commande->devise_paiement),
+                        'currency'     => $stripeCurrency,
                         'product_data' => ['name' => "Commande Zando na Ndako #{$commande->numero_commande}"],
-                        'unit_amount'  => (int) round((float) $commande->montant_total * 100),
+                        'unit_amount'  => $this->stripeUnitAmount((float) $commande->montant_total, $stripeCurrency),
                     ],
                     'quantity' => 1,
                 ]],
@@ -101,8 +139,8 @@ class PaymentController extends Controller
         $paiement = Paiement::create([
             'commande_id' => $commande->id,
             'methode'     => 'stripe',
-            'montant'     => $session->amount_total / 100,
-            'devise'      => strtoupper($session->currency),
+            'montant'     => $this->stripeAmountToMontant((int) $session->amount_total, (string) $session->currency),
+            'devise'      => $this->fromStripeCurrency((string) $session->currency),
             'statut'      => 'valide',
             'date_paiement' => now(),
             'reference_transaction_externe' => $session->payment_intent ?: $session->id,
@@ -241,25 +279,6 @@ class PaymentController extends Controller
         return $response->json('access_token');
     }
 
-    // POST /api/payment/carte-locale/init
-    public function initierCarteLocale(Request $request): JsonResponse
-    {
-        $validated = $request->validate(['commande_id'=>'required|uuid|exists:commandes,id']);
-        $commande = Commande::findOrFail($validated['commande_id']);
-        $paiement = Paiement::create(['commande_id'=>$commande->id,'methode'=>'carte_locale','montant'=>$commande->montant_total,'devise'=>'FCFA','statut'=>'en_attente']);
-        DashboardCache::bump();
-        return response()->json(['success'=>true,'message'=>'Paiement par carte locale initié.','data'=>$paiement]);
-    }
-
-    // POST /api/payment/carte-locale/confirm
-    public function confirmerCarteLocale(Request $request): JsonResponse
-    {
-        $validated = $request->validate(['paiement_id'=>'required|uuid|exists:paiements,id','reference'=>'required|string']);
-        Paiement::findOrFail($validated['paiement_id'])->update(['statut'=>'valide','date_paiement'=>now(),'reference_transaction_externe'=>$validated['reference']]);
-        DashboardCache::bump();
-        return response()->json(['success'=>true,'message'=>'Paiement par carte confirmé.']);
-    }
-
     // POST /api/payment/mtn-momo/init
     public function initierMtnMoMo(Request $request, MtnMomoService $momoService): JsonResponse
     {
@@ -364,22 +383,98 @@ class PaymentController extends Controller
     }
 
     // POST /api/payment/airtel-money/init
-    public function initierAirtelMoney(Request $request): JsonResponse
+    //
+    // Même contrat que initierMtnMoMo : envoie une vraie demande de paiement (push USSD) au
+    // téléphone du client dès que AirtelMoneyService est configuré, sinon simule proprement.
+    public function initierAirtelMoney(Request $request, AirtelMoneyService $airtelService): JsonResponse
     {
-        $validated = $request->validate(['commande_id'=>'required|uuid|exists:commandes,id']);
+        $validated = $request->validate([
+            'commande_id' => 'required|uuid|exists:commandes,id',
+            'telephone'   => 'sometimes|string',
+        ]);
         $commande = Commande::findOrFail($validated['commande_id']);
-        $paiement = Paiement::create(['commande_id'=>$commande->id,'methode'=>'airtel_money','montant'=>$commande->montant_total,'devise'=>'FCFA','statut'=>'en_attente']);
+        $phone = $validated['telephone'] ?? $commande->client?->user?->telephone;
+
+        if (!$phone) {
+            return response()->json(['success' => false, 'message' => 'Aucun numéro de téléphone disponible pour ce paiement Airtel Money.'], 422);
+        }
+
+        $result = $airtelService->requestToPay($phone, (float) $commande->montant_total, $commande->numero_commande);
+
+        if (!$result || !$result['success']) {
+            return response()->json(['success' => false, 'message' => $result['message'] ?? 'Erreur lors du paiement Airtel Money.'], 400);
+        }
+
+        $paiement = Paiement::create([
+            'commande_id' => $commande->id,
+            'methode'     => 'airtel_money',
+            'montant'     => $commande->montant_total,
+            'devise'      => 'FCFA',
+            'statut'      => 'en_attente',
+            'reference_transaction_externe' => $result['reference_id'],
+        ]);
         DashboardCache::bump();
-        return response()->json(['success'=>true,'message'=>'Demande de paiement Airtel Money envoyée.','data'=>$paiement]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Demande de paiement Airtel Money transmise.',
+            'data'    => array_merge($paiement->toArray(), [
+                'reference_id' => $result['reference_id'],
+                'mode'         => $result['mode'] ?? 'live',
+            ]),
+        ]);
     }
 
     // POST /api/payment/airtel-money/confirm
-    public function confirmerAirtelMoney(Request $request): JsonResponse
+    //
+    // Appelable en polling par le client (idempotent), mêmes garanties que confirmerMtnMoMo : ne
+    // marque jamais 'valide' sur la seule foi d'une référence fournie par le client — uniquement
+    // sur un statut SUCCESSFUL renvoyé par Airtel (ou en mode simulation si non configuré).
+    public function confirmerAirtelMoney(Request $request, AirtelMoneyService $airtelService): JsonResponse
     {
-        $validated = $request->validate(['paiement_id'=>'required|uuid|exists:paiements,id','reference'=>'required|string']);
-        Paiement::findOrFail($validated['paiement_id'])->update(['statut'=>'valide','date_paiement'=>now(),'reference_transaction_externe'=>$validated['reference']]);
-        DashboardCache::bump();
-        return response()->json(['success'=>true,'message'=>'Paiement Airtel Money confirmé.']);
+        $validated = $request->validate([
+            'paiement_id' => 'required|uuid|exists:paiements,id',
+        ]);
+        $paiement = Paiement::findOrFail($validated['paiement_id']);
+
+        if ($paiement->statut === 'valide') {
+            return response()->json(['success' => true, 'status' => 'valide', 'message' => 'Paiement déjà confirmé.', 'data' => $paiement]);
+        }
+        if ($paiement->statut === 'echoue') {
+            return response()->json(['success' => false, 'status' => 'echoue', 'message' => 'Ce paiement a échoué.']);
+        }
+
+        $ref = $paiement->reference_transaction_externe;
+
+        if (!$ref || !$airtelService->isConfigured()) {
+            $paiement->update(['statut' => 'valide', 'date_paiement' => now()]);
+            DashboardCache::bump();
+            return response()->json(['success' => true, 'status' => 'valide', 'message' => 'Paiement Airtel Money confirmé avec succès.', 'data' => $paiement]);
+        }
+
+        $statusCheck = $airtelService->getPaymentStatus($ref);
+
+        if (!$statusCheck) {
+            return response()->json(['success' => false, 'status' => 'en_attente', 'message' => 'Impossible de vérifier le statut du paiement pour le moment.']);
+        }
+
+        if ($statusCheck['status'] === 'SUCCESSFUL') {
+            $paiement->update([
+                'statut'                        => 'valide',
+                'date_paiement'                 => now(),
+                'reference_transaction_externe' => $statusCheck['financial_transaction_id'] ?? $ref,
+            ]);
+            DashboardCache::bump();
+            return response()->json(['success' => true, 'status' => 'valide', 'message' => 'Paiement Airtel Money confirmé avec succès.', 'data' => $paiement]);
+        }
+
+        if ($statusCheck['status'] === 'FAILED') {
+            $paiement->update(['statut' => 'echoue']);
+            DashboardCache::bump();
+            return response()->json(['success' => false, 'status' => 'echoue', 'message' => $statusCheck['message'] ?? "Le paiement Airtel Money a échoué."]);
+        }
+
+        return response()->json(['success' => false, 'status' => 'en_attente', 'message' => 'En attente de validation sur le téléphone du client.']);
     }
 
     // POST /api/payment/livraison/confirm

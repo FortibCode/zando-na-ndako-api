@@ -16,6 +16,7 @@ use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 
 class AuthController extends Controller
 {
@@ -169,6 +170,116 @@ $user->load(['client', 'administrateur', 'roles']);
                     'est_diaspora'     => $user->type_utilisateur === 'client' ? ($user->client?->est_diaspora ?? false) : null,
                     // Rôles/permissions : nécessaires uniquement pour les comptes administrateur — le
                     // front back-office s'en sert pour masquer/afficher les sections selon le rôle.
+                    'roles'            => $user->roles->pluck('role')->values(),
+                    'administrateur'   => $user->administrateur ? [
+                        'role_admin'  => $user->administrateur->role_admin,
+                        'permissions' => $user->getPermissions(),
+                    ] : null,
+                ],
+            ],
+        ]);
+    }
+
+    // POST /api/auth/google — connexion (compte existant) ou inscription client (nouveau compte).
+    // Google ne fournit ni téléphone ni type de compte : pour un email inconnu, on répond
+    // GOOGLE_ACCOUNT_NOT_FOUND et le frontend doit rappeler cet endpoint avec type_utilisateur +
+    // telephone une fois ces informations complétées par l'utilisateur (flux en 2 temps, standard
+    // pour un "S'inscrire avec Google" qui a besoin de plus que ce que Google renvoie).
+    public function loginWithGoogle(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'id_token'         => 'required|string',
+            'type_utilisateur' => 'sometimes|in:client',
+            'telephone'        => 'required_with:type_utilisateur|string|unique:users,telephone',
+        ]);
+
+        $clientIds = config('services.google.client_ids');
+        if (empty($clientIds)) {
+            return response()->json(['success' => false, 'message' => "La connexion Google n'est pas encore configurée sur ce serveur."], 501);
+        }
+
+        $payload = null;
+        // verifyIdToken() lève une exception (plutôt que de renvoyer false) sur un jeton mal formé —
+        // un id_token bidon ou corrompu ne doit jamais faire remonter une 500 côté client.
+        try {
+            foreach ($clientIds as $clientId) {
+                $client = new \Google\Client(['client_id' => $clientId]);
+                $verified = $client->verifyIdToken($validated['id_token']);
+                if ($verified) {
+                    $payload = $verified;
+                    break;
+                }
+            }
+        } catch (\Throwable $e) {
+            $payload = null;
+        }
+
+        if (!$payload || empty($payload['email'])) {
+            return response()->json(['success' => false, 'message' => 'Jeton Google invalide ou expiré.', 'error_code' => 'INVALID_GOOGLE_TOKEN'], 401);
+        }
+
+        $user = User::where('email', $payload['email'])->first();
+
+        if (!$user) {
+            if (empty($validated['type_utilisateur'])) {
+                return response()->json([
+                    'success'    => false,
+                    'message'    => 'Aucun compte associé à cet email Google.',
+                    'error_code' => 'GOOGLE_ACCOUNT_NOT_FOUND',
+                ], 404);
+            }
+
+            DB::beginTransaction();
+            try {
+                $user = User::create([
+                    'nom'               => $payload['family_name'] ?? '',
+                    'prenom'            => $payload['given_name'] ?? ($payload['name'] ?? 'Utilisateur'),
+                    'email'             => $payload['email'],
+                    'telephone'         => $validated['telephone'],
+                    // Compte créé via Google : aucun mot de passe local n'est jamais communiqué ni
+                    // utilisable — ce hash aléatoire ne sert qu'à satisfaire la colonne NOT NULL.
+                    'mot_de_passe_hash' => Hash::make(Str::random(40)),
+                    'type_utilisateur'  => 'client',
+                    // Email déjà vérifié par Google : le parcours OTP habituel est inutile ici.
+                    'statut_compte'     => 'actif',
+                    'consentement_cgu'  => true,
+                    'photo_profil'      => $payload['picture'] ?? null,
+                ]);
+                Client::create(['user_id' => $user->id, 'est_diaspora' => false]);
+                DB::commit();
+                DashboardCache::bump();
+            } catch (\Throwable $e) {
+                DB::rollBack();
+                return response()->json(['success' => false, 'message' => 'Erreur lors de la création du compte.', 'error' => $e->getMessage()], 500);
+            }
+        }
+
+        if ($user->statut_compte === 'suspendu') {
+            return response()->json(['success' => false, 'message' => 'Votre compte a été suspendu.', 'error_code' => 'ACCOUNT_SUSPENDED'], 403);
+        }
+
+        $user->update(['derniere_connexion' => now()]);
+        $user->tokens()->delete();
+        $token = $user->createToken('api_token', [$user->type_utilisateur])->plainTextToken;
+
+        $user->load(['client', 'administrateur', 'roles']);
+        return response()->json([
+            'success' => true,
+            'message' => 'Connexion réussie.',
+            'data'    => [
+                'token'      => $token,
+                'token_type' => 'Bearer',
+                'user'       => [
+                    'id'               => $user->id,
+                    'nom_complet'      => $user->nom_complet,
+                    'email'            => $user->email,
+                    'telephone'        => $user->telephone,
+                    'type_utilisateur' => $user->type_utilisateur,
+                    'statut_compte'    => $user->statut_compte,
+                    'photo_profil'     => $user->photo_profil,
+                    'devise_preferee'  => $user->devise_preferee,
+                    'pays_residence'   => $user->pays_residence,
+                    'est_diaspora'     => $user->type_utilisateur === 'client' ? ($user->client?->est_diaspora ?? false) : null,
                     'roles'            => $user->roles->pluck('role')->values(),
                     'administrateur'   => $user->administrateur ? [
                         'role_admin'  => $user->administrateur->role_admin,

@@ -14,7 +14,28 @@ class UserController extends Controller
 public function me(Request $request): JsonResponse
     {
         $user = $request->user()->load(['client', 'vendeur', 'livreur', 'administrateur', 'roles']);
-        return response()->json(['success'=>true,'data'=>[
+        return response()->json(['success'=>true,'data'=>$this->userPayload($user)]);
+    }
+
+    public function update(Request $request): JsonResponse
+    {
+        $user = $request->user();
+        $validated = $request->validate([
+            'nom'=>'sometimes|string|max:100','prenom'=>'sometimes|string|max:100','date_naissance'=>'sometimes|date','sexe'=>'sometimes|in:homme,femme',
+            'ville'=>'sometimes|string|max:100','adresse'=>'sometimes|string|max:500','email'=>'sometimes|email|unique:users,email,'.$user->id,
+            'langue_preferee'=>'sometimes|in:francais,lingala,anglais','devise_preferee'=>'sometimes|in:FCFA,USD,EUR,GBP','pays_residence'=>'sometimes|string|max:100',
+        ]);
+        $user->update($validated);
+        // Même forme que me() : $user->fresh() seul omettrait nom_complet (accesseur non listé dans
+        // $appends sur le modèle) — le client stockait alors un profil sans nom_complet, provoquant
+        // un crash (Cannot read properties of undefined (reading 'split')) à la prochaine lecture de
+        // ce champ ailleurs dans l'app.
+        return response()->json(['success'=>true,'message'=>'Profil mis à jour.','data'=>$this->userPayload($user->fresh()->load(['client', 'vendeur', 'livreur', 'administrateur', 'roles']))]);
+    }
+
+    private function userPayload($user): array
+    {
+        return [
             'id'=>$user->id,'nom'=>$user->nom,'prenom'=>$user->prenom,'nom_complet'=>$user->nom_complet,
             'email'=>$user->email,'telephone'=>$user->telephone,'date_naissance'=>$user->date_naissance,'sexe'=>$user->sexe,
             'ville'=>$user->ville,'adresse'=>$user->adresse,'type_utilisateur'=>$user->type_utilisateur,
@@ -28,19 +49,7 @@ public function me(Request $request): JsonResponse
                 'role_admin'=>$user->administrateur->role_admin,
                 'permissions'=>$user->getPermissions(),
             ] : null,
-        ]]);
-    }
-
-    public function update(Request $request): JsonResponse
-    {
-        $user = $request->user();
-        $validated = $request->validate([
-            'nom'=>'sometimes|string|max:100','prenom'=>'sometimes|string|max:100','date_naissance'=>'sometimes|date','sexe'=>'sometimes|in:homme,femme',
-            'ville'=>'sometimes|string|max:100','adresse'=>'sometimes|string|max:500','email'=>'sometimes|email|unique:users,email,'.$user->id,
-            'langue_preferee'=>'sometimes|in:francais,lingala,anglais','devise_preferee'=>'sometimes|in:FCFA,USD,EUR,GBP','pays_residence'=>'sometimes|string|max:100',
-        ]);
-        $user->update($validated);
-        return response()->json(['success'=>true,'message'=>'Profil mis à jour.','data'=>$user->fresh()]);
+        ];
     }
 
     public function changePassword(Request $request): JsonResponse

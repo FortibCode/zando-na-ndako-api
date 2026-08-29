@@ -7,11 +7,11 @@ use Illuminate\Support\Facades\Schema;
 
 /**
  * Traçabilité des remboursements déclenchés par un litige, découplée de toute passerelle de
- * paiement réelle : reste 'en_attente' pour tout ce qui n'est pas Stripe/PayPal (mtn_momo,
- * airtel_money, carte_locale, paiement_livraison n'ont aucune intégration processeur dans cette
- * app — voir AdminController::rembourserCommande()), exactement comme les retraits vendeurs/
- * livreurs sont déjà traités manuellement hors-app. methode_prevue reste nullable : elle permettra
- * de brancher plus tard un vrai connecteur Airtel/MTN sans changer le schéma.
+ * paiement réelle : reste 'en_attente' pour tout ce qui n'est pas Stripe/PayPal (mtn_momo et
+ * airtel_money ont une vraie intégration Collections — voir MtnMomoService/AirtelMoneyService —
+ * mais cette API ne couvre pas le remboursement ; paiement_livraison n'a jamais de paiement
+ * électronique à rembourser — voir AdminController::rembourserCommande()), exactement comme les
+ * retraits vendeurs/livreurs sont déjà traités manuellement hors-app.
  */
 return new class extends Migration
 {

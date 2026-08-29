@@ -341,7 +341,7 @@ class VendeurController extends Controller
 
     public function modifierProduit(Request $request, string $id): JsonResponse
     {
-        $validated = $request->validate(['nom_produit'=>'sometimes|string','description'=>'nullable|string','prix_unitaire'=>'sometimes|numeric','unite_mesure'=>'sometimes|string','type_fraicheur'=>'sometimes|in:frais,fume,congele']);
+        $validated = $request->validate(['nom_produit'=>'sometimes|string','description'=>'nullable|string','prix_unitaire'=>'sometimes|numeric','unite_mesure'=>'sometimes|string','type_fraicheur'=>'sometimes|in:frais,fume,congele','categorie_id'=>'sometimes|uuid|exists:categories,id']);
         $p = Produit::where('id',$id)->where('vendeur_id',$this->getVendeur($request)->id)->firstOrFail();
         if (isset($validated['prix_unitaire'])) $validated['date_maj_prix'] = now();
         $p->update($validated);

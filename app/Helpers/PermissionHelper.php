@@ -13,7 +13,7 @@ class PermissionHelper
                 'view_users', 'create_users', 'edit_users', 'delete_users', 'manage_users_status',
                 'view_vendeurs', 'validate_vendeurs', 'suspendre_vendeurs', 'edit_vendeurs',
                 'view_livreurs', 'validate_livreurs', 'suspendre_livreurs',
-                'view_all_commandes', 'assign_commandes', 'edit_commande_status', 'cancel_commandes', 'refund_commandes',
+                'view_all_commandes', 'assign_commandes', 'edit_commande_status', 'cancel_commandes', 'refund_commandes', 'delete_commandes',
                 'view_livraisons', 'reassign_livraisons',
                 'view_all_produits', 'edit_produits', 'delete_produits',
                 'view_categories', 'create_categories', 'edit_categories', 'delete_categories',
