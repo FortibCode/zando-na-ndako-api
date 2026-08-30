@@ -2,6 +2,7 @@ FROM php:8.2-cli
 
 # Set environment variables for Composer
 ENV COMPOSER_ALLOW_SUPERUSER=1
+ENV COMPOSER_MEMORY_LIMIT=-1
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
@@ -42,11 +43,11 @@ RUN mkdir -p storage/framework/sessions storage/framework/views storage/framewor
 # Set permissions for www-data
 RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
 
-# Install PHP dependencies without running scripts during image build
-RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts
+# Install PHP dependencies ignoring platform extension strict checks & unlimited memory
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts --ignore-platform-reqs
 
 # Expose port 10000
 EXPOSE 10000
 
-# Start command: discover packages, clear config, run migrations and start server
+# Start command
 CMD sh -c "php artisan package:discover --ansi && php artisan config:clear && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"
