@@ -5,3 +5,5 @@ vendor
 node_modules
 storage/*.key
 storage/logs/*
+bootstrap/cache/*.php
+!bootstrap/cache/.gitignore
