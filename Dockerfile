@@ -49,5 +49,5 @@ RUN composer install --no-dev --optimize-autoloader --no-interaction --no-script
 # Expose port 10000
 EXPOSE 10000
 
-# Start command: clear cache, discover packages, attempt migrations, and start serve
-CMD sh -c "rm -f bootstrap/cache/*.php && php artisan config:clear && php artisan package:discover --ansi ; php artisan migrate --force ; php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"
+# Start command: clear cache, discover packages, attempt migrations, and start fast web server
+CMD sh -c "rm -f bootstrap/cache/*.php && php artisan config:clear && php artisan package:discover --ansi ; php artisan migrate --force ; php -S 0.0.0.0:${PORT:-10000} -t public public/index.php"
