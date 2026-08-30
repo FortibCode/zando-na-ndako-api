@@ -33,7 +33,7 @@ WORKDIR /var/www
 # Copy existing application directory contents
 COPY . /var/www
 
-# Ensure .env exists during build for Artisan commands
+# Ensure .env exists during build
 RUN cp .env.example .env
 
 # Create required Laravel framework directories
@@ -42,11 +42,11 @@ RUN mkdir -p storage/framework/sessions storage/framework/views storage/framewor
 # Set permissions for www-data
 RUN chown -R www-data:www-data /var/www/storage /var/www/bootstrap/cache
 
-# Install PHP dependencies
-RUN composer install --no-dev --optimize-autoloader --no-interaction
+# Install PHP dependencies without running scripts during image build
+RUN composer install --no-dev --optimize-autoloader --no-interaction --no-scripts
 
 # Expose port 10000
 EXPOSE 10000
 
-# Start command
-CMD sh -c "php artisan config:clear && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"
+# Start command: discover packages, clear config, run migrations and start server
+CMD sh -c "php artisan package:discover --ansi && php artisan config:clear && php artisan migrate --force && php artisan serve --host=0.0.0.0 --port=${PORT:-10000}"
