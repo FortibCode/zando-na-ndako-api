@@ -513,3 +513,22 @@ Route::get('/health', function () {
         'timestamp' => now()->toIso8601String(),
     ]);
 });
+
+// Route publique de secours pour servir les fichiers médias (photos de profil, produits, etc.)
+Route::get('/storage/{path}', function ($path) {
+    $fullPath = storage_path('app/public/' . $path);
+    if (\Illuminate\Support\Facades\File::exists($fullPath) && !\Illuminate\Support\Facades\File::isDirectory($fullPath)) {
+        $mime = \Illuminate\Support\Facades\File::mimeType($fullPath) ?: 'image/png';
+        return response()->file($fullPath, ['Content-Type' => $mime]);
+    }
+    $dir = dirname($fullPath);
+    if (\Illuminate\Support\Facades\File::exists($dir) && \Illuminate\Support\Facades\File::isDirectory($dir)) {
+        $files = \Illuminate\Support\Facades\File::files($dir);
+        if (count($files) > 0) {
+            $fallback = $files[0]->getRealPath();
+            $mime = \Illuminate\Support\Facades\File::mimeType($fallback) ?: 'image/png';
+            return response()->file($fallback, ['Content-Type' => $mime]);
+        }
+    }
+    abort(404);
+})->where('path', '.*');
