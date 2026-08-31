@@ -861,11 +861,11 @@ class AdminController extends Controller
         if ($v->user) {
             $v->user->update(['statut_compte' => 'actif']);
             Notification::create([
-                'user_id'           => $v->user->id,
-                'titre'              => 'Compte Vendeur Validé',
-                'message'            => 'Félicitations ! Votre compte vendeur a été validé par un administrateur. Vous pouvez désormais ajouter vos produits et ouvrir votre boutique.',
-                'type_notification' => 'vendeur_valide',
-                'statut_lecture'     => false,
+                'user_id'        => $v->user->id,
+                'titre'          => 'Compte Vendeur Validé',
+                'message'        => 'Félicitations ! Votre compte vendeur a été validé par un administrateur. Vous pouvez désormais ajouter vos produits et ouvrir votre boutique.',
+                'type_canal'     => 'push',
+                'statut_lecture' => false,
             ]);
             try {
                 app(PushService::class)->envoyerAUtilisateur(
@@ -891,11 +891,11 @@ class AdminController extends Controller
             $v->user->update(['statut_compte' => 'suspendu']);
             $v->user->tokens()->delete();
             Notification::create([
-                'user_id'           => $v->user->id,
-                'titre'              => 'Compte Vendeur Suspendu',
-                'message'            => 'Votre compte vendeur a été suspendu par l\'administration. Veuillez contacter le support.',
-                'type_notification' => 'vendeur_suspendu',
-                'statut_lecture'     => false,
+                'user_id'        => $v->user->id,
+                'titre'          => 'Compte Vendeur Suspendu',
+                'message'        => 'Votre compte vendeur a été suspendu par l\'administration. Veuillez contacter le support.',
+                'type_canal'     => 'push',
+                'statut_lecture' => false,
             ]);
             try {
                 app(PushService::class)->envoyerAUtilisateur(
@@ -949,11 +949,11 @@ class AdminController extends Controller
         if ($l->user) {
             $l->user->update(['statut_compte' => 'actif']);
             Notification::create([
-                'user_id'           => $l->user->id,
-                'titre'              => 'Compte Livreur Validé',
-                'message'            => 'Votre profil livreur a été approuvé. Vous pouvez passer en mode disponible et recevoir des livraisons.',
-                'type_notification' => 'livreur_valide',
-                'statut_lecture'     => false,
+                'user_id'        => $l->user->id,
+                'titre'          => 'Compte Livreur Validé',
+                'message'        => 'Votre profil livreur a été approuvé. Vous pouvez passer en mode disponible et recevoir des livraisons.',
+                'type_canal'     => 'push',
+                'statut_lecture' => false,
             ]);
             try {
                 app(PushService::class)->envoyerAUtilisateur(
@@ -979,11 +979,11 @@ class AdminController extends Controller
             $l->user->update(['statut_compte' => 'suspendu']);
             $l->user->tokens()->delete();
             Notification::create([
-                'user_id'           => $l->user->id,
-                'titre'              => 'Compte Livreur Suspendu',
-                'message'            => 'Votre compte livreur a été suspendu par l\'administration.',
-                'type_notification' => 'livreur_suspendu',
-                'statut_lecture'     => false,
+                'user_id'        => $l->user->id,
+                'titre'          => 'Compte Livreur Suspendu',
+                'message'        => 'Votre compte livreur a été suspendu par l\'administration.',
+                'type_canal'     => 'push',
+                'statut_lecture' => false,
             ]);
             try {
                 app(PushService::class)->envoyerAUtilisateur(
