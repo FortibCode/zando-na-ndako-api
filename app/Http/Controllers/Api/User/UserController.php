@@ -66,7 +66,7 @@ public function me(Request $request): JsonResponse
 
     public function uploadPhoto(Request $request): JsonResponse
     {
-        $request->validate(['photo'=>'required|image|mimes:jpeg,png,jpg,webp|max:2048']);
+        $request->validate(['photo'=>'required|image|mimes:jpeg,png,jpg,webp|max:10240']);
         $user = $request->user();
         if ($user->photo_profil) Storage::disk('supabase')->delete($user->photo_profil);
         $path = $request->file('photo')->store('photos/profils','supabase');

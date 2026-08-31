@@ -116,9 +116,9 @@ class VendeurController extends Controller
     public function televerserDocuments(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'photo_boutique'     => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:3072',
-            'document_identite'  => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:5120',
-            'registre_commerce'  => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:5120',
+            'photo_boutique'     => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:10240',
+            'document_identite'  => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:10240',
+            'registre_commerce'  => 'sometimes|image|mimes:jpeg,png,jpg,webp|max:10240',
         ]);
 
         if (empty($validated)) {
@@ -322,7 +322,7 @@ class VendeurController extends Controller
             // 3-8 Mo (courant pour une photo de téléphone) n'était plus tronquée par PHP depuis le
             // relèvement à 8M, mais restait quand même rejetée ici par cette règle Laravel restée à
             // 3072 Ko — le vendeur ne pouvait donc toujours pas publier de produit avec une vraie photo.
-            'type_fraicheur'=>'sometimes|in:frais,fume,congele','photo'=>'nullable|image|mimes:jpeg,png,jpg,webp|max:8192',
+            'type_fraicheur'=>'sometimes|in:frais,fume,congele','photo'=>'nullable|image|mimes:jpeg,png,jpg,webp|max:10240',
         ]);
 
         $photoPath = $request->hasFile('photo') ? $request->file('photo')->store('photos/produits','supabase') : null;
