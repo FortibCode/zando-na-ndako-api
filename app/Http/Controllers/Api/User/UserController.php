@@ -68,16 +68,16 @@ public function me(Request $request): JsonResponse
     {
         $request->validate(['photo'=>'required|image|mimes:jpeg,png,jpg,webp|max:2048']);
         $user = $request->user();
-        if ($user->photo_profil) Storage::disk('public')->delete($user->photo_profil);
-        $path = $request->file('photo')->store('photos/profils','public');
+        if ($user->photo_profil) Storage::disk('supabase')->delete($user->photo_profil);
+        $path = $request->file('photo')->store('photos/profils','supabase');
         $user->update(['photo_profil'=>$path]);
-        return response()->json(['success'=>true,'message'=>'Photo mise à jour.','photo_url'=>Storage::url($path)]);
+        return response()->json(['success'=>true,'message'=>'Photo mise à jour.','photo_url'=>Storage::disk('supabase')->url($path)]);
     }
 
     public function deletePhoto(Request $request): JsonResponse
     {
         $user = $request->user();
-        if ($user->photo_profil) { Storage::disk('public')->delete($user->photo_profil); $user->update(['photo_profil'=>null]); }
+        if ($user->photo_profil) { Storage::disk('supabase')->delete($user->photo_profil); $user->update(['photo_profil'=>null]); }
         return response()->json(['success'=>true,'message'=>'Photo supprimée.']);
     }
 

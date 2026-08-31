@@ -1473,7 +1473,7 @@ class AdminController extends Controller
         ]);
         unset($validated['photo']);
         if ($request->hasFile('photo')) {
-            $validated['icone'] = $request->file('photo')->store('photos/categories', 'public');
+            $validated['icone'] = $request->file('photo')->store('photos/categories', 'supabase');
         }
         $categorie = Categorie::create($validated);
         AuditLogger::log($request->user(), 'creer_categorie', 'catalogue', 'Categorie', $categorie->id, null, $validated, $request);
@@ -1492,9 +1492,9 @@ class AdminController extends Controller
         $avant = $categorie->only(array_keys($validated));
         if ($request->hasFile('photo')) {
             if ($categorie->icone && str_contains($categorie->icone, '/')) {
-                Storage::disk('public')->delete($categorie->icone);
+                Storage::disk('supabase')->delete($categorie->icone);
             }
-            $validated['icone'] = $request->file('photo')->store('photos/categories', 'public');
+            $validated['icone'] = $request->file('photo')->store('photos/categories', 'supabase');
         }
         $categorie->update($validated);
         AuditLogger::log($request->user(), 'modifier_categorie', 'catalogue', 'Categorie', $categorie->id, $avant, $validated, $request);
@@ -1506,7 +1506,7 @@ class AdminController extends Controller
         $c = Categorie::findOrFail($id);
         if ($c->produits()->count() > 0) return response()->json(['success'=>false,'message'=>'Catégorie utilisée.'],400);
         if ($c->icone && str_contains($c->icone, '/')) {
-            Storage::disk('public')->delete($c->icone);
+            Storage::disk('supabase')->delete($c->icone);
         }
         AuditLogger::log($request->user(), 'supprimer_categorie', 'catalogue', 'Categorie', $c->id, $c->only(['nom_categorie']), null, $request);
         $c->delete();
@@ -1531,7 +1531,7 @@ class AdminController extends Controller
         ]);
         unset($validated['logo']);
         if ($request->hasFile('logo')) {
-            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'public');
+            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'supabase');
         }
         $typeBoutique = TypeBoutique::create($validated);
         AuditLogger::log($request->user(), 'creer_type_boutique', 'catalogue', 'TypeBoutique', $typeBoutique->id, null, $validated, $request);
@@ -1549,9 +1549,9 @@ class AdminController extends Controller
         $avant = $typeBoutique->only(['type', 'logo']);
         if ($request->hasFile('logo')) {
             if ($typeBoutique->logo) {
-                Storage::disk('public')->delete($typeBoutique->logo);
+                Storage::disk('supabase')->delete($typeBoutique->logo);
             }
-            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'public');
+            $validated['logo'] = $request->file('logo')->store('photos/types_boutique', 'supabase');
         }
 
         // Un type renommé reste le même type pour les boutiques qui l'avaient déjà choisi — sinon
@@ -1574,7 +1574,7 @@ class AdminController extends Controller
             return response()->json(['success' => false, 'message' => 'Ce type de boutique est utilisé par au moins un vendeur.'], 400);
         }
         if ($typeBoutique->logo) {
-            Storage::disk('public')->delete($typeBoutique->logo);
+            Storage::disk('supabase')->delete($typeBoutique->logo);
         }
         AuditLogger::log($request->user(), 'supprimer_type_boutique', 'catalogue', 'TypeBoutique', $typeBoutique->id, $typeBoutique->only(['type']), null, $request);
         $typeBoutique->delete();
@@ -1681,9 +1681,9 @@ class AdminController extends Controller
         $avant = $produit->only(array_keys($validated));
         if ($request->hasFile('photo')) {
             if ($produit->photo_produit) {
-                Storage::disk('public')->delete($produit->photo_produit);
+                Storage::disk('supabase')->delete($produit->photo_produit);
             }
-            $validated['photo_produit'] = $request->file('photo')->store('photos/produits', 'public');
+            $validated['photo_produit'] = $request->file('photo')->store('photos/produits', 'supabase');
         }
         if (isset($validated['prix_unitaire'])) {
             $validated['date_maj_prix'] = now();
@@ -1720,7 +1720,7 @@ class AdminController extends Controller
         if ($produit->lignesCommande()->count() > 0) {
             return response()->json(['success' => false, 'message' => 'Ce produit a déjà été commandé et ne peut pas être supprimé.'], 400);
         }
-        if ($produit->photo_produit) Storage::disk('public')->delete($produit->photo_produit);
+        if ($produit->photo_produit) Storage::disk('supabase')->delete($produit->photo_produit);
         AuditLogger::log($request->user(), 'supprimer_produit', 'produits', 'Produit', $produit->id, $produit->only(['nom_produit', 'vendeur_id']), null, $request);
         $produit->delete();
         return response()->json(['success' => true, 'message' => 'Produit supprimé.']);
@@ -1752,7 +1752,7 @@ class AdminController extends Controller
         ]);
         unset($validated['image_bandeau']);
         if ($request->hasFile('image_bandeau')) {
-            $validated['image_bandeau'] = $request->file('image_bandeau')->store('photos/promotions', 'public');
+            $validated['image_bandeau'] = $request->file('image_bandeau')->store('photos/promotions', 'supabase');
         }
         $promotion = Promotion::create($validated + ['statut_actif' => $validated['statut_actif'] ?? true]);
         AuditLogger::log($request->user(), 'creer_promotion', 'marketing', 'Promotion', $promotion->id, null, $validated, $request);
@@ -1775,9 +1775,9 @@ class AdminController extends Controller
         $promotion = Promotion::findOrFail($id);
         if ($request->hasFile('image_bandeau')) {
             if ($promotion->image_bandeau) {
-                Storage::disk('public')->delete($promotion->image_bandeau);
+                Storage::disk('supabase')->delete($promotion->image_bandeau);
             }
-            $validated['image_bandeau'] = $request->file('image_bandeau')->store('photos/promotions', 'public');
+            $validated['image_bandeau'] = $request->file('image_bandeau')->store('photos/promotions', 'supabase');
         }
         $avant = $promotion->only(array_keys($validated));
         $promotion->update($validated);

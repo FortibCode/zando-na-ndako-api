@@ -131,9 +131,9 @@ class VendeurController extends Controller
         foreach (['photo_boutique', 'document_identite', 'registre_commerce'] as $champ) {
             if ($request->hasFile($champ)) {
                 if ($v->$champ) {
-                    Storage::disk('public')->delete($v->$champ);
+                    Storage::disk('supabase')->delete($v->$champ);
                 }
-                $update[$champ] = $request->file($champ)->store('documents/vendeurs', 'public');
+                $update[$champ] = $request->file($champ)->store('documents/vendeurs', 'supabase');
             }
         }
 
@@ -325,7 +325,7 @@ class VendeurController extends Controller
             'type_fraicheur'=>'sometimes|in:frais,fume,congele','photo'=>'nullable|image|mimes:jpeg,png,jpg,webp|max:8192',
         ]);
 
-        $photoPath = $request->hasFile('photo') ? $request->file('photo')->store('photos/produits','public') : null;
+        $photoPath = $request->hasFile('photo') ? $request->file('photo')->store('photos/produits','supabase') : null;
 
         $p = Produit::create([
             'vendeur_id'=>$v->id,'categorie_id'=>$validated['categorie_id'],'nom_produit'=>$validated['nom_produit'],
@@ -352,7 +352,7 @@ class VendeurController extends Controller
     public function supprimerProduit(Request $request, string $id): JsonResponse
     {
         $p = Produit::where('id',$id)->where('vendeur_id',$this->getVendeur($request)->id)->firstOrFail();
-        if ($p->photo_produit) Storage::disk('public')->delete($p->photo_produit);
+        if ($p->photo_produit) Storage::disk('supabase')->delete($p->photo_produit);
         $p->delete();
         DashboardCache::bump();
         return response()->json(['success'=>true,'message'=>'Produit supprimé.']);

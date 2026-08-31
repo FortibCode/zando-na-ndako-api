@@ -59,7 +59,7 @@ class LitigePieceJointeController extends Controller
 
         $fichier = $request->file('fichier');
         $mime = $fichier->getMimeType() ?? '';
-        $path = $fichier->store('preuves/litiges', 'public');
+        $path = $fichier->store('preuves/litiges', 'supabase');
 
         $piece = LitigePieceJointe::create([
             'litige_id' => $litige->id,
