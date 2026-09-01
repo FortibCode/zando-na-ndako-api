@@ -313,7 +313,7 @@ class VendeurController extends Controller
     public function ajouterProduit(Request $request): JsonResponse
     {
         $v = $this->getVendeur($request);
-        if ($v->statut_validation !== 'valide') return response()->json(['success'=>false,'message'=>'Compte non validé.'],403);
+        if ($v->statut_validation === 'suspendu') return response()->json(['success'=>false,'message'=>'Compte suspendu.'],403);
 
         $validated = $request->validate([
             'nom_produit'=>'required|string|max:200','description'=>'nullable|string','categorie_id'=>'required|uuid|exists:categories,id',

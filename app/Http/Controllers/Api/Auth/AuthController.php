@@ -81,7 +81,7 @@ class AuthController extends Controller
                     'nom_commerce'      => $validated['nom_commerce'] ?? 'Boutique ' . $validated['prenom'],
                     'categorie_principale' => $validated['categorie_principale'] ?? (TypeBoutique::libellesValides()[0] ?? 'Autre commerce'),
                     'zone_id'           => $validated['zone_id'] ?? null,
-                    'statut_validation' => 'en_attente',
+                    'statut_validation' => 'valide',
                     'solde_disponible'  => 0,
                 ]),
                 'livreur' => Livreur::create([
@@ -89,7 +89,7 @@ class AuthController extends Controller
                     'type_vehicule'       => $validated['type_vehicule'] ?? 'moto',
                     'immatriculation_vehicule' => $validated['immatriculation'] ?? 'En attente',
                     'statut_disponibilite'=> 'indisponible',
-                    'statut_validation'   => 'en_attente',
+                    'statut_validation'   => 'valide',
                     'solde_disponible'    => 0,
                 ]),
                 default => null,
