@@ -107,8 +107,63 @@ class CatalogueController extends Controller
 
     public function search(Request $request): JsonResponse
     {
-        $s = $request->validate(['q'=>'required|string|max:100'])['q'];
-        return response()->json(['success'=>true,'data'=>$this->excluBoutiquesFermees(Produit::with('vendeur')->where('statut_disponibilite','disponible'))->where('nom_produit','like',"%{$s}%")->take(20)->get()]);
+        $s = trim($request->validate(['q' => 'required|string|max:100'])['q']);
+        if (strlen($s) < 2) {
+            return response()->json(['success' => true, 'data' => []]);
+        }
+
+        // Produits disponibles correspondant à la recherche avec relations vendeur.zone et promotions
+        $produits = $this->excluBoutiquesFermees(
+            Produit::with(['vendeur.zone', 'categorie', 'promotions.promotion'])
+                ->where('statut_disponibilite', 'disponible')
+                ->where('nom_produit', 'like', "%{$s}%")
+        )->get();
+
+        // Regroupement par nom de produit (insensible à la casse)
+        $grouped = $produits->groupBy(function ($item) {
+            return mb_strtolower(trim($item->nom_produit));
+        });
+
+        $data = [];
+        foreach ($grouped as $nomNormalise => $items) {
+            // Trier les offres par prix effectif croissant (compte tenu des promotions actives)
+            $sortedItems = $items->sortBy(function ($item) {
+                return (float) $item->prix_avec_promotion;
+            })->values();
+
+            $mainProduit = $sortedItems->first();
+
+            $offresVendeurs = $sortedItems->map(function ($item) {
+                $v = $item->vendeur;
+                return [
+                    'produit_id' => $item->id,
+                    'vendeur_id' => $v?->id,
+                    'nom_commerce' => $v?->nom_commerce,
+                    'photo_boutique' => $v?->photo_boutique,
+                    'note_moyenne' => (float) ($v?->note_moyenne ?? 0),
+                    'ville' => $v?->zone?->ville,
+                    'prix_unitaire' => (float) $item->prix_unitaire,
+                    'prix_effectif' => (float) $item->prix_avec_promotion,
+                    'est_en_promotion' => (bool) $item->est_en_promotion,
+                    'quantite_stock' => $item->quantite_stock,
+                    'unite_mesure' => $item->unite_mesure,
+                    'photo_produit' => $item->photo_produit,
+                ];
+            })->values();
+
+            $prixMin = (float) $offresVendeurs->min('prix_effectif');
+            $prixMax = (float) $offresVendeurs->max('prix_effectif');
+
+            $mainArr = $mainProduit->toArray();
+            $mainArr['prix_min'] = $prixMin;
+            $mainArr['prix_max'] = $prixMax;
+            $mainArr['nombre_boutiques'] = $offresVendeurs->count();
+            $mainArr['offres_vendeurs'] = $offresVendeurs;
+
+            $data[] = $mainArr;
+        }
+
+        return response()->json(['success' => true, 'data' => array_slice($data, 0, 20)]);
     }
 
     public function produitDetail(Request $request, string $id): JsonResponse
