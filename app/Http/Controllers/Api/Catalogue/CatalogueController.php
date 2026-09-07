@@ -22,6 +22,12 @@ class CatalogueController extends Controller
         return response()->json(['success'=>true,'data'=>ZoneLivraison::where('statut_actif',true)->get()]);
     }
 
+    // GET /api/locations — liste publique des arrondissements et quartiers par ville
+    public function locations(Request $request): JsonResponse
+    {
+        return response()->json(['success' => true, 'data' => \App\Helpers\ArrondissementHelper::getLocations()]);
+    }
+
     // Une boutique "fermée" (voir VendeurController::mettreAJourStatutBoutique) ne doit plus
     // apparaître au catalogue public : c'est ce que l'écran mobile "Statut de la boutique" promet
     // ("Fermée : votre boutique est fermée"). Une boutique "en pause" reste volontairement visible
@@ -195,15 +201,15 @@ class CatalogueController extends Controller
                 'categorie_principale' => $v->categorie_principale,
                 'note_moyenne' => (float) $v->note_moyenne,
                 'ville' => $v->zone?->ville,
+                'arrondissement' => $v->arrondissement,
+                'quartier' => $v->quartier_custom ?: $v->quartier,
                 'photo_boutique' => $v->photo_boutique,
             ]);
 
         return response()->json(['success' => true, 'data' => $vendeurs]);
     }
 
-    // GET /api/vendeurs/types — types de boutique réellement utilisés (categorie_principale est un
-    // simple champ texte libre, pas une FK/enum) : sert à construire l'écran "types de boutique" côté
-    // client sans coder en dur une liste qui pourrait ne pas correspondre aux vraies boutiques.
+    // GET /api/vendeurs/types — types de boutique réellement utilisés
     public function vendeurTypes(Request $request): JsonResponse
     {
         $types = \App\Models\Vendeur::where('statut_validation', 'valide')
@@ -216,24 +222,11 @@ class CatalogueController extends Controller
         return response()->json(['success' => true, 'data' => $types]);
     }
 
-    // GET /api/vendeurs/types-disponibles — la liste COMPLÈTE des types de boutique autorisés
-    // (App\Models\TypeBoutique, gérée par un admin via /admin/types-boutique), pas seulement ceux
-    // déjà utilisés par un vrai vendeur (contrairement à vendeurTypes() ci-dessus) : sert aux
-    // formulaires d'inscription/profil vendeur, où un premier vendeur d'un type donné doit pouvoir
-    // le choisir avant qu'aucun autre vendeur de ce type n'existe encore.
     public function vendeurTypesDisponibles(Request $request): JsonResponse
     {
         return response()->json(['success' => true, 'data' => \App\Models\TypeBoutique::libellesValides()]);
     }
 
-    // GET /api/vendeurs/types-logos — la liste COMPLÈTE des types de boutique gérés par l'admin
-    // (App\Models\TypeBoutique, voir /admin/types-boutique), avec leur logo s'il existe. Affiche
-    // volontairement aussi les types sans aucun vendeur pour l'instant (contrairement à
-    // vendeurTypes() ci-dessus, qui ne liste que ceux réellement en usage) : la page qui liste les
-    // boutiques d'un type gère déjà proprement le cas "aucune boutique pour l'instant", donc un type
-    // vide reste visible plutôt que de disparaître complètement de l'accueil. `logo` vaut null tant
-    // qu'aucun admin n'a rien envoyé pour ce type — le frontend retombe alors sur une icône
-    // générique, jamais une image inventée.
     public function vendeurTypesAvecLogos(Request $request): JsonResponse
     {
         $data = \App\Models\TypeBoutique::orderBy('type')->get(['type', 'logo']);
@@ -241,9 +234,6 @@ class CatalogueController extends Controller
         return response()->json(['success' => true, 'data' => $data]);
     }
 
-    // GET /api/vendeurs — liste publique paginée des boutiques, pour l'écran client "boutiques d'un
-    // type" (remplace le parcours plat par catégorie de produit). Mêmes champs/exclusions que
-    // vendeursTop(), avec filtres réels au lieu du top-8 fixe.
     public function vendeurs(Request $request): JsonResponse
     {
         $q = \App\Models\Vendeur::with('zone')
@@ -251,6 +241,7 @@ class CatalogueController extends Controller
             ->where('statut_boutique', '!=', 'fermee');
 
         if ($type = $request->get('type')) $q->where('categorie_principale', $type);
+        if ($arr = $request->get('arrondissement')) $q->where('arrondissement', $arr);
         if ($s = $request->get('search')) $q->where('nom_commerce', 'like', "%{$s}%");
 
         $vendeurs = $q->orderByDesc('note_moyenne')->paginate(20);
@@ -260,6 +251,8 @@ class CatalogueController extends Controller
             'categorie_principale' => $v->categorie_principale,
             'note_moyenne' => (float) $v->note_moyenne,
             'ville' => $v->zone?->ville,
+            'arrondissement' => $v->arrondissement,
+            'quartier' => $v->quartier_custom ?: $v->quartier,
             'photo_boutique' => $v->photo_boutique,
         ]);
 
@@ -279,6 +272,8 @@ class CatalogueController extends Controller
             'categorie_principale' => $v->categorie_principale,
             'note_moyenne' => (float) $v->note_moyenne,
             'ville' => $v->zone?->ville,
+            'arrondissement' => $v->arrondissement,
+            'quartier' => $v->quartier_custom ?: $v->quartier,
             'photo_boutique' => $v->photo_boutique,
             'horaires_ouverture' => $v->horaires_ouverture,
             'message_boutique' => $v->message_boutique,

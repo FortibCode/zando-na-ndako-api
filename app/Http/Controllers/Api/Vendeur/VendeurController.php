@@ -88,18 +88,14 @@ class VendeurController extends Controller
     public function mettreAJourProfil(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'nom_commerce'    => 'sometimes|string|max:150',
-            // Idem : colonne déjà présente depuis la création de la table (voir migration
-            // create_vendeurs_table) mais jusqu'ici jamais modifiable après l'inscription — l'écran
-            // mobile "Informations personnelles" affichait donc toujours la catégorie choisie à
-            // l'inscription, sans moyen de la corriger si le vendeur avait changé d'activité.
-            'categorie_principale' => 'sometimes|string|in:' . implode(',', \App\Models\TypeBoutique::libellesValides()),
-            'coordonnees_gps' => 'sometimes|array',
-            'coordonnees_gps.lat' => 'required_with:coordonnees_gps|numeric|between:-90,90',
-            'coordonnees_gps.lng' => 'required_with:coordonnees_gps|numeric|between:-180,180',
-            // Colonnes présentes depuis la création de la table mais jusqu'ici jamais exposées par
-            // cette route — l'écran mobile "Coordonnées de paiement" / "Horaires d'ouverture" n'avait
-            // donc aucun moyen réel de les enregistrer.
+            'nom_commerce'          => 'sometimes|string|max:150',
+            'categorie_principale'  => 'sometimes|string|in:' . implode(',', \App\Models\TypeBoutique::libellesValides()),
+            'arrondissement'        => 'sometimes|nullable|string|max:100',
+            'quartier'              => 'sometimes|nullable|string|max:100',
+            'quartier_custom'       => 'sometimes|nullable|string|max:100',
+            'coordonnees_gps'       => 'sometimes|array',
+            'coordonnees_gps.lat'   => 'required_with:coordonnees_gps|numeric|between:-90,90',
+            'coordonnees_gps.lng'   => 'required_with:coordonnees_gps|numeric|between:-180,180',
             'numero_mobile_money_reception' => 'sometimes|nullable|string|max:30',
             'horaires_ouverture'            => 'sometimes|nullable|string|max:150',
         ]);

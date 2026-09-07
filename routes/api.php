@@ -58,6 +58,7 @@ Route::post('/client/diaspora/register', [DiasporaClientController::class, 'regi
 // === CATALOGUE PUBLIC ===
 Route::get('/categories', [CatalogueController::class, 'categories']);
 Route::get('/zones', [CatalogueController::class, 'zones']);
+Route::get('/locations', [CatalogueController::class, 'locations']);
 Route::get('/produits', [CatalogueController::class, 'produits']);
 Route::get('/produits/populaires', [CatalogueController::class, 'populaires']);
 Route::get('/produits/recents', [CatalogueController::class, 'recents']);

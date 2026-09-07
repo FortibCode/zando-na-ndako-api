@@ -15,7 +15,8 @@ class Vendeur extends Model
     protected $keyType = 'string';
 
     protected $fillable = [
-        'user_id', 'nom_commerce', 'categorie_principale', 'zone_id', 'coordonnees_gps',
+        'user_id', 'nom_commerce', 'categorie_principale', 'zone_id', 'arrondissement',
+        'quartier', 'quartier_custom', 'coordonnees_gps',
         'note_moyenne', 'statut_validation', 'statut_boutique', 'message_boutique', 'solde_disponible',
         'photo_boutique', 'document_identite', 'registre_commerce',
         'numero_mobile_money_reception', 'horaires_ouverture',

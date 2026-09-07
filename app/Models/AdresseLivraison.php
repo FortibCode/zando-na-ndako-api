@@ -16,7 +16,7 @@ class AdresseLivraison extends Model
 
     protected $fillable = [
         'client_id', 'label', 'nom_complet', 'telephone', 'ville',
-        'quartier', 'adresse', 'coordonnees_gps', 'instructions', 'est_defaut'
+        'arrondissement', 'quartier', 'quartier_custom', 'adresse', 'coordonnees_gps', 'instructions', 'est_defaut'
     ];
 
     protected $casts = [
