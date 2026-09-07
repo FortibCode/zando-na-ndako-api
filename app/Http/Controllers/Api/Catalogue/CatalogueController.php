@@ -112,11 +112,12 @@ class CatalogueController extends Controller
             return response()->json(['success' => true, 'data' => []]);
         }
 
-        // Produits disponibles correspondant à la recherche avec relations vendeur.zone et promotions
+        // Produits disponibles correspondant à la recherche avec relations légères vendeur.zone et promotions
         $produits = $this->excluBoutiquesFermees(
-            Produit::with(['vendeur.zone', 'categorie', 'promotions.promotion'])
+            Produit::with(['vendeur.zone:id,ville', 'categorie:id,nom_categorie', 'promotions.promotion'])
                 ->where('statut_disponibilite', 'disponible')
                 ->where('nom_produit', 'like', "%{$s}%")
+                ->take(50)
         )->get();
 
         // Regroupement par nom de produit (insensible à la casse)
