@@ -74,6 +74,8 @@ Route::get('/vendeurs/{id}/avis', [CatalogueController::class, 'avisVendeur']);
 Route::get('/vendeurs/{id}', [CatalogueController::class, 'vendeurDetail']);
 Route::get('/vendeur/{vendeurId}/produits', [CatalogueController::class, 'produitsVendeur']);
 Route::get('/avis/publics', [CatalogueController::class, 'avisPublics']);
+Route::get('/bannieres', [CatalogueController::class, 'bannieres']);
+Route::post('/bannieres/{id}/clic', [CatalogueController::class, 'enregistrerClicBanniere']);
 
 // === DIASPORA - SUIVI PARTAGÉ & CONVERSION DEVISE (Public) ===
 Route::get('/diaspora/suivi/{numeroCommande}', [DiasporaController::class, 'suiviPartage']);
@@ -219,6 +221,10 @@ Route::middleware(['auth:sanctum'])->group(function () {
         Route::get('/litiges', [VendeurController::class, 'litiges']);
         Route::get('/litiges/{id}', [VendeurController::class, 'litigeDetail']);
         Route::get('/avis', [VendeurController::class, 'avis']);
+
+        // Forfaits & Abonnement Boutique Vendeur
+        Route::get('/abonnement', [VendeurController::class, 'monAbonnement']);
+        Route::post('/abonnement/souscrire', [VendeurController::class, 'souscrireAbonnement']);
 
         // Promotions self-service du vendeur (distinct de /admin/promotions, la bannière gérée
         // par l'administrateur).
@@ -370,6 +376,13 @@ Route::post('/livraisons/{id}/collecte', [LivreurController::class, 'confirmerCo
             Route::post('/', [AdminController::class, 'ajouterTypeBoutique'])->middleware('permission:create_types_boutique');
             Route::put('/{id}', [AdminController::class, 'modifierTypeBoutique'])->middleware('permission:edit_types_boutique');
             Route::delete('/{id}', [AdminController::class, 'supprimerTypeBoutique'])->middleware('permission:delete_types_boutique');
+        });
+
+        Route::prefix('bannieres')->group(function () {
+            Route::get('/', [AdminController::class, 'bannieres']);
+            Route::post('/', [AdminController::class, 'ajouterBanniere']);
+            Route::put('/{id}', [AdminController::class, 'modifierBanniere']);
+            Route::delete('/{id}', [AdminController::class, 'supprimerBanniere']);
         });
 
         Route::prefix('zones')->group(function () {

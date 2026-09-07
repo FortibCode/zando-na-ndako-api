@@ -23,6 +23,13 @@ class Client extends Model
         'est_diaspora' => 'boolean',
     ];
 
+    protected $appends = [
+        'commandes_count',
+        'total_depense',
+        'code_fidelite',
+        'badge_label',
+    ];
+
     // Relations
     public function user()
     {
@@ -54,9 +61,47 @@ class Client extends Model
         return $this->hasManyThrough(Notification::class, User::class);
     }
 
-    // Méthodes
+    // Méthodes & Accesseurs de Fidélité
     public function getPanierActifAttribute()
     {
         return $this->panier()->firstOrCreate(['statut' => 'actif']);
+    }
+
+    public function getCommandesCountAttribute(): int
+    {
+        return $this->commandes()->count();
+    }
+
+    public function getTotalDepenseAttribute(): float
+    {
+        return (float) $this->commandes()->where('statut_commande', 'livree')->sum('montant_total');
+    }
+
+    public function getCodeFideliteAttribute(): string
+    {
+        $livrees = $this->commandes()->where('statut_commande', 'livree')->count();
+        $total = $this->commandes_count;
+        $depense = $this->total_depense;
+
+        if ($livrees >= 10 || $depense >= 100000) {
+            return 'vip';
+        }
+        if ($livrees >= 5) {
+            return 'fidele';
+        }
+        if ($total >= 1) {
+            return 'regulier';
+        }
+        return 'nouveau';
+    }
+
+    public function getBadgeLabelAttribute(): string
+    {
+        return match ($this->code_fidelite) {
+            'vip' => 'Client VIP',
+            'fidele' => 'Client Fidèle',
+            'regulier' => 'Client Régulier',
+            default => 'Nouveau Client',
+        };
     }
 }

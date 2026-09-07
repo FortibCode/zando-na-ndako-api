@@ -666,4 +666,99 @@ class VendeurController extends Controller
         PromotionVendeur::where('id', $id)->where('vendeur_id', $this->getVendeur($request)->id)->firstOrFail()->delete();
         return response()->json(['success' => true, 'message' => 'Promotion supprimée.']);
     }
+
+    public function monAbonnement(Request $request): JsonResponse
+    {
+        $vendeur = $this->getVendeur($request);
+        $produitsCount = $vendeur->produits()->count();
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'vendeur_id' => $vendeur->id,
+                'nom_commerce' => $vendeur->nom_commerce,
+                'formule_abonnement' => $vendeur->formule_abonnement,
+                'statut_abonnement' => $vendeur->statut_abonnement,
+                'est_abonnement_actif' => $vendeur->est_abonnement_actif,
+                'badge_vendeur' => $vendeur->badge_vendeur,
+                'date_expiration_abonnement' => $vendeur->date_expiration_abonnement?->toIso8601String(),
+                'produits_actuels' => $produitsCount,
+                'limite_produits' => $vendeur->limite_produits,
+                'forfaits_disponibles' => [
+                    [
+                        'id' => 'gratuit',
+                        'nom' => 'Starter (Gratuit)',
+                        'prix' => 0,
+                        'periode' => 'mois',
+                        'limite_produits' => 10,
+                        'badge' => null,
+                        'description' => 'Idéal pour démarrer votre commerce sur Zando na Ndako.',
+                    ],
+                    [
+                        'id' => 'pro',
+                        'nom' => 'Boutique PRO',
+                        'prix' => 10000,
+                        'periode' => 'mois',
+                        'limite_produits' => 'Illimités',
+                        'badge' => 'Boutique Pro Verified',
+                        'description' => 'Produits illimités + Badge officiel de vérification et priorité dans la recherche.',
+                    ],
+                    [
+                        'id' => 'vip',
+                        'nom' => 'VIP Gold',
+                        'prix' => 25000,
+                        'periode' => 'mois',
+                        'limite_produits' => 'Illimités',
+                        'badge' => 'VIP Gold',
+                        'description' => 'Positionnement en 1ère place sur l\'accueil & recherches + badge prestige Gold.',
+                    ],
+                ]
+            ],
+        ]);
+    }
+
+    public function souscrireAbonnement(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'formule' => 'required|in:pro,vip',
+            'moyen_paiement' => 'required|string|in:mtn_momo,airtel_money,solde_vendeur',
+            'telephone' => 'nullable|string',
+        ]);
+
+        $vendeur = $this->getVendeur($request);
+        $formule = $validated['formule'];
+        $prix = $formule === 'vip' ? 25000 : 10000;
+
+        if ($validated['moyen_paiement'] === 'solde_vendeur') {
+            if ((float) $vendeur->solde_disponible < $prix) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Solde vendeur insuffisant. Veuillez recharger votre compte ou choisir MTN/Airtel Money.'
+                ], 422);
+            }
+            $vendeur->decrement('solde_disponible', $prix);
+        }
+
+        $now = now();
+        $dateExistant = $vendeur->date_expiration_abonnement;
+        $debut = ($dateExistant && $now->lt($dateExistant)) ? $dateExistant : $now;
+        $expiration = $debut->copy()->addDays(30);
+
+        $vendeur->update([
+            'formule_abonnement' => $formule,
+            'date_expiration_abonnement' => $expiration,
+            'statut_abonnement' => 'actif',
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'message' => "Félicitations ! Votre abonnement " . ($formule === 'vip' ? 'VIP Gold' : 'Boutique PRO') . " a été activé jusqu'au " . $expiration->format('d/m/Y') . ".",
+            'data' => [
+                'formule_abonnement' => $vendeur->formule_abonnement,
+                'badge_vendeur' => $vendeur->badge_vendeur,
+                'date_expiration_abonnement' => $expiration->toIso8601String(),
+                'statut_abonnement' => 'actif',
+            ]
+        ]);
+    }
 }

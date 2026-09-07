@@ -16,7 +16,7 @@ class Produit extends Model
 
     protected $fillable = [
         'vendeur_id', 'categorie_id', 'nom_produit', 'description',
-        'prix_unitaire', 'unite_mesure', 'quantite_stock',
+        'prix_unitaire', 'unite_mesure', 'pas_quantite', 'quantite_minimale', 'quantite_stock',
         'statut_disponibilite', 'photo_produit', 'type_fraicheur',
         'date_maj_prix'
     ];
@@ -24,6 +24,8 @@ class Produit extends Model
     protected $casts = [
         'date_maj_prix' => 'datetime',
         'prix_unitaire' => 'decimal:2',
+        'pas_quantite' => 'float',
+        'quantite_minimale' => 'float',
     ];
 
     // Relations

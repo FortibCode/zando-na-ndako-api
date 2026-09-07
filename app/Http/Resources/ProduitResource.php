@@ -16,6 +16,8 @@ class ProduitResource extends JsonResource
             'prix_unitaire'        => (float) $this->prix_unitaire,
             'prix_affiche'         => $this->prix_affiche,
             'unite_mesure'         => $this->unite_mesure,
+            'pas_quantite'         => (float) ($this->pas_quantite ?? 1.00),
+            'quantite_minimale'    => (float) ($this->quantite_minimale ?? 1.00),
             'quantite_stock'       => $this->quantite_stock,
             'statut_disponibilite' => $this->statut_disponibilite,
             'type_fraicheur'       => $this->type_fraicheur,

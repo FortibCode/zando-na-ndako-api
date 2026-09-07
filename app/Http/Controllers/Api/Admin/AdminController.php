@@ -13,6 +13,7 @@ use App\Models\Notification;
 use App\Models\CampagneNotification;
 use App\Models\Categorie;
 use App\Models\TypeBoutique;
+use App\Models\BannierePublicitaire;
 use App\Models\Commission;
 use App\Models\Coupon;
 use App\Models\Livraison;
@@ -623,12 +624,42 @@ class AdminController extends Controller
 
     public function utilisateurs(Request $request): JsonResponse
     {
-        $q = User::query()->with('client');
+        $q = User::query()->with(['client', 'client.commandes']);
         if ($t = $request->get('type')) $q->where('type_utilisateur', $t);
         if ($s = $request->get('statut')) $q->where('statut_compte', $s);
         if ($request->boolean('diaspora')) $q->whereHas('client', fn($cq) => $cq->where('est_diaspora', true));
+
+        if ($fid = $request->get('fidelite')) {
+            $q->whereHas('client', function ($cq) use ($fid) {
+                if ($fid === 'vip') {
+                    $cq->whereHas('commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '>=', 10);
+                } else if ($fid === 'fidele') {
+                    $cq->whereHas('commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '>=', 5)
+                       ->whereHas('commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '<', 10);
+                } else if ($fid === 'regulier') {
+                    $cq->whereHas('commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '>=', 1)
+                       ->whereHas('commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '<', 5);
+                } else if ($fid === 'nouveau') {
+                    $cq->whereDoesntHave('commandes');
+                }
+            });
+        }
+
         if ($search = $request->get('search')) $q->where(fn($q) => $q->where('nom','like',"%{$search}%")->orWhere('email','like',"%{$search}%")->orWhere('telephone','like',"%{$search}%"));
-        return response()->json(['success'=>true,'data'=>$q->orderBy('date_inscription','desc')->paginate((int) $request->get('per_page', 25))]);
+
+        $paginated = $q->orderBy('date_inscription','desc')->paginate((int) $request->get('per_page', 25));
+
+        $statsFidelite = [
+            'total_clients' => User::where('type_utilisateur', 'client')->count(),
+            'clients_fideles' => User::where('type_utilisateur', 'client')->whereHas('client.commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '>=', 5)->count(),
+            'clients_vip' => User::where('type_utilisateur', 'client')->whereHas('client.commandes', fn($orq) => $orq->where('statut_commande', 'livree'), '>=', 10)->count(),
+        ];
+
+        return response()->json([
+            'success' => true,
+            'data' => $paginated,
+            'stats_fidelite' => $statsFidelite,
+        ]);
     }
 
     public function creerUtilisateur(Request $request): JsonResponse
@@ -2510,5 +2541,77 @@ class AdminController extends Controller
         if ($debut = $request->get('date_debut')) $q->whereDate('date_action', '>=', $debut);
         if ($fin = $request->get('date_fin')) $q->whereDate('date_action', '<=', $fin);
         return response()->json(['success'=>true,'data'=>$q->paginate((int) $request->get('per_page', 50))]);
+    }
+
+    public function bannieres(Request $request): JsonResponse
+    {
+        $bannieres = BannierePublicitaire::with('vendeur:id,nom_commerce,logo')
+            ->orderBy('priorite', 'desc')
+            ->orderBy('created_at', 'desc')
+            ->paginate((int) $request->get('per_page', 20));
+
+        return response()->json(['success' => true, 'data' => $bannieres]);
+    }
+
+    public function ajouterBanniere(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'titre'       => 'required|string|max:255',
+            'description' => 'nullable|string',
+            'image'       => 'nullable|image|max:5120',
+            'vendeur_id'  => 'nullable|uuid|exists:vendeurs,id',
+            'type_cible'  => 'required|in:boutique,produit,categorie,externe',
+            'cible_id'    => 'nullable|string|max:255',
+            'date_debut'  => 'nullable|date',
+            'date_fin'    => 'nullable|date',
+            'statut'      => 'nullable|in:en_attente,actif,expire,rejete',
+            'priorite'    => 'nullable|integer',
+        ]);
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('photos/bannieres', 'supabase');
+            $validated['image_url'] = \Illuminate\Support\Facades\Storage::disk('supabase')->url($path);
+        } else {
+            $validated['image_url'] = $request->get('image_url', 'https://images.unsplash.com/photo-1542838132-92c53300491e?w=800&auto=format&fit=crop');
+        }
+
+        $banniere = BannierePublicitaire::create($validated);
+
+        return response()->json(['success' => true, 'message' => 'Bannière publicitaire ajoutée avec succès.', 'data' => $banniere], 201);
+    }
+
+    public function modifierBanniere(Request $request, string $id): JsonResponse
+    {
+        $banniere = BannierePublicitaire::findOrFail($id);
+
+        $validated = $request->validate([
+            'titre'       => 'sometimes|string|max:255',
+            'description' => 'nullable|string',
+            'image'       => 'nullable|image|max:5120',
+            'vendeur_id'  => 'nullable|uuid|exists:vendeurs,id',
+            'type_cible'  => 'sometimes|in:boutique,produit,categorie,externe',
+            'cible_id'    => 'nullable|string|max:255',
+            'date_debut'  => 'nullable|date',
+            'date_fin'    => 'nullable|date',
+            'statut'      => 'sometimes|in:en_attente,actif,expire,rejete',
+            'priorite'    => 'sometimes|integer',
+        ]);
+
+        if ($request->hasFile('image')) {
+            $path = $request->file('image')->store('photos/bannieres', 'supabase');
+            $validated['image_url'] = \Illuminate\Support\Facades\Storage::disk('supabase')->url($path);
+        }
+
+        $banniere->update($validated);
+
+        return response()->json(['success' => true, 'message' => 'Bannière mise à jour.', 'data' => $banniere]);
+    }
+
+    public function supprimerBanniere(Request $request, string $id): JsonResponse
+    {
+        $banniere = BannierePublicitaire::findOrFail($id);
+        $banniere->delete();
+
+        return response()->json(['success' => true, 'message' => 'Bannière supprimée.']);
     }
 }

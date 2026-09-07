@@ -54,7 +54,7 @@ class PanierController extends Controller
     {
         $validated = $request->validate([
             'produit_id' => 'required|uuid|exists:produits,id',
-            'quantite'   => 'required|integer|min:1|max:100',
+            'quantite'   => 'required|numeric|min:0.01|max:100',
         ]);
         $produit = Produit::findOrFail($validated['produit_id']);
         if (!$produit->estDisponible()) {
@@ -95,7 +95,7 @@ class PanierController extends Controller
 
     public function modifier(Request $request, string $ligneId): JsonResponse
     {
-        $validated = $request->validate(['quantite' => 'required|integer|min:1|max:100']);
+        $validated = $request->validate(['quantite' => 'required|numeric|min:0.01|max:100']);
         $panier = $this->getPanierActif($request);
         $ligne = LignePanier::where('id', $ligneId)->where('panier_id', $panier->id)->firstOrFail();
         $produit = $ligne->produit;
