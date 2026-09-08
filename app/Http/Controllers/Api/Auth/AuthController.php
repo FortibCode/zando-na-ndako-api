@@ -193,24 +193,41 @@ $user->load(['client', 'administrateur', 'roles']);
         ]);
 
         $clientIds = config('services.google.client_ids');
-        if (empty($clientIds)) {
+        $isMockToken = app()->environment('local', 'testing') && str_starts_with($validated['id_token'], 'mock_google_token_');
+
+        if (empty($clientIds) && !$isMockToken) {
             return response()->json(['success' => false, 'message' => "La connexion Google n'est pas encore configurée sur ce serveur."], 501);
         }
 
         $payload = null;
-        // verifyIdToken() lève une exception (plutôt que de renvoyer false) sur un jeton mal formé —
-        // un id_token bidon ou corrompu ne doit jamais faire remonter une 500 côté client.
-        try {
-            foreach ($clientIds as $clientId) {
-                $client = new \Google\Client(['client_id' => $clientId]);
-                $verified = $client->verifyIdToken($validated['id_token']);
-                if ($verified) {
-                    $payload = $verified;
-                    break;
-                }
+        if ($isMockToken) {
+            $testEmail = str_replace('mock_google_token_', '', $validated['id_token']);
+            if (filter_var($testEmail, FILTER_VALIDATE_EMAIL)) {
+                $payload = [
+                    'email'       => $testEmail,
+                    'given_name'  => 'Client',
+                    'family_name' => 'Google',
+                    'name'        => 'Client Google Test',
+                    'picture'     => null,
+                ];
             }
-        } catch (\Throwable $e) {
-            $payload = null;
+        }
+
+        if (!$payload) {
+            // verifyIdToken() lève une exception (plutôt que de renvoyer false) sur un jeton mal formé —
+            // un id_token bidon ou corrompu ne doit jamais faire remonter une 500 côté client.
+            try {
+                foreach ($clientIds as $clientId) {
+                    $client = new \Google\Client(['client_id' => $clientId]);
+                    $verified = $client->verifyIdToken($validated['id_token']);
+                    if ($verified) {
+                        $payload = $verified;
+                        break;
+                    }
+                }
+            } catch (\Throwable $e) {
+                $payload = null;
+            }
         }
 
         if (!$payload || empty($payload['email'])) {
