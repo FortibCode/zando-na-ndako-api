@@ -187,9 +187,14 @@ $user->load(['client', 'administrateur', 'roles']);
     public function loginWithGoogle(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'id_token'         => 'required|string',
-            'type_utilisateur' => 'sometimes|in:client',
-            'telephone'        => 'required_with:type_utilisateur|string|unique:users,telephone',
+            'id_token'             => 'required|string',
+            'type_utilisateur'     => 'sometimes|in:client,vendeur,livreur',
+            'est_diaspora'         => 'sometimes|boolean',
+            'telephone'            => 'sometimes|nullable|string',
+            'nom_commerce'         => 'sometimes|nullable|string|max:150',
+            'categorie_principale' => 'sometimes|nullable|string',
+            'type_vehicule'        => 'sometimes|nullable|in:moto,voiture',
+            'immatriculation'      => 'sometimes|nullable|string',
         ]);
 
         $clientIds = config('services.google.client_ids');
@@ -204,6 +209,7 @@ $user->load(['client', 'administrateur', 'roles']);
             $testEmail = str_replace('mock_google_token_', '', $validated['id_token']);
             if (filter_var($testEmail, FILTER_VALIDATE_EMAIL)) {
                 $payload = [
+                    'sub'         => 'mock_sub_12345',
                     'email'       => $testEmail,
                     'given_name'  => 'Client',
                     'family_name' => 'Google',
@@ -237,31 +243,55 @@ $user->load(['client', 'administrateur', 'roles']);
         $user = User::where('email', $payload['email'])->first();
 
         if (!$user) {
-            if (empty($validated['type_utilisateur'])) {
-                return response()->json([
-                    'success'    => false,
-                    'message'    => 'Aucun compte associé à cet email Google.',
-                    'error_code' => 'GOOGLE_ACCOUNT_NOT_FOUND',
-                ], 404);
-            }
+            $typeUtilisateur = $validated['type_utilisateur'] ?? 'client';
+            $estDiaspora = $request->boolean('est_diaspora', false);
 
             DB::beginTransaction();
             try {
+                $tel = !empty($validated['telephone'])
+                    ? $validated['telephone']
+                    : '+24206' . sprintf('%06d', mt_rand(100000, 999999));
+
+                while (User::where('telephone', $tel)->exists()) {
+                    $tel = '+24206' . sprintf('%06d', mt_rand(100000, 999999));
+                }
+
                 $user = User::create([
-                    'nom'               => $payload['family_name'] ?? '',
-                    'prenom'            => $payload['given_name'] ?? ($payload['name'] ?? 'Utilisateur'),
+                    'nom'               => !empty($payload['family_name']) ? $payload['family_name'] : 'Google',
+                    'prenom'            => !empty($payload['given_name']) ? $payload['given_name'] : (!empty($payload['name']) ? $payload['name'] : 'Utilisateur'),
                     'email'             => $payload['email'],
-                    'telephone'         => $validated['telephone'],
-                    // Compte créé via Google : aucun mot de passe local n'est jamais communiqué ni
-                    // utilisable — ce hash aléatoire ne sert qu'à satisfaire la colonne NOT NULL.
+                    'telephone'         => $tel,
+                    'google_id'         => $payload['sub'] ?? null,
                     'mot_de_passe_hash' => Hash::make(Str::random(40)),
-                    'type_utilisateur'  => 'client',
-                    // Email déjà vérifié par Google : le parcours OTP habituel est inutile ici.
+                    'type_utilisateur'  => $typeUtilisateur,
                     'statut_compte'     => 'actif',
                     'consentement_cgu'  => true,
                     'photo_profil'      => $payload['picture'] ?? null,
+                    'devise_preferee'   => $estDiaspora ? 'EUR' : 'FCFA',
                 ]);
-                Client::create(['user_id' => $user->id, 'est_diaspora' => false]);
+
+                match ($typeUtilisateur) {
+                    'client' => Client::create([
+                        'user_id'      => $user->id,
+                        'est_diaspora' => $estDiaspora,
+                    ]),
+                    'vendeur' => Vendeur::create([
+                        'user_id'              => $user->id,
+                        'nom_commerce'         => $validated['nom_commerce'] ?? ('Boutique ' . $user->prenom),
+                        'categorie_principale' => $validated['categorie_principale'] ?? (TypeBoutique::libellesValides()[0] ?? 'Autre commerce'),
+                        'statut_validation'    => 'valide',
+                        'solde_disponible'     => 0,
+                    ]),
+                    'livreur' => Livreur::create([
+                        'user_id'                  => $user->id,
+                        'type_vehicule'            => $validated['type_vehicule'] ?? 'moto',
+                        'immatriculation_vehicule' => $validated['immatriculation'] ?? 'En attente',
+                        'statut_disponibilite'     => 'indisponible',
+                        'statut_validation'        => 'valide',
+                        'solde_disponible'         => 0,
+                    ]),
+                };
+
                 DB::commit();
                 DashboardCache::bump();
             } catch (\Throwable $e) {

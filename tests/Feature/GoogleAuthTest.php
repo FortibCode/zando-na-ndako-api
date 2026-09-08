@@ -11,25 +11,10 @@ class GoogleAuthTest extends TestCase
 {
     use RefreshDatabase;
 
-    public function test_google_login_with_unknown_account_returns_404_demanding_phone(): void
+    public function test_google_login_new_account_creation_instant_1_click(): void
     {
         $response = $this->postJson('/api/auth/google', [
-            'id_token' => 'mock_google_token_newuser@example.com',
-        ]);
-
-        $response->assertStatus(404)
-            ->assertJson([
-                'success' => false,
-                'error_code' => 'GOOGLE_ACCOUNT_NOT_FOUND',
-            ]);
-    }
-
-    public function test_google_login_new_account_creation_with_phone(): void
-    {
-        $response = $this->postJson('/api/auth/google', [
-            'id_token' => 'mock_google_token_newuser@example.com',
-            'type_utilisateur' => 'client',
-            'telephone' => '+242069998877',
+            'id_token' => 'mock_google_token_instantnewuser@example.com',
         ]);
 
         $response->assertStatus(200)
@@ -39,8 +24,7 @@ class GoogleAuthTest extends TestCase
             ]);
 
         $this->assertDatabaseHas('users', [
-            'email' => 'newuser@example.com',
-            'telephone' => '+242069998877',
+            'email' => 'instantnewuser@example.com',
             'type_utilisateur' => 'client',
             'statut_compte' => 'actif',
         ]);
