@@ -377,7 +377,10 @@ class CatalogueController extends Controller
     {
         $bannieres = Cache::remember('catalogue_bannieres_actives_v1', 900, function () {
             return \App\Models\BannierePublicitaire::actives()
-                ->with(['vendeur:id,nom_commerce,logo'])
+                // `logo` n'existe pas sur vendeurs (c'est une colonne de types_boutique) : la
+                // sélectionner faisait échouer la requête, donc GET /api/bannieres répondait 500.
+                // Seul nom_commerce est affiché (badge du carrousel publicitaire côté client).
+                ->with(['vendeur:id,nom_commerce'])
                 ->get();
         });
 
